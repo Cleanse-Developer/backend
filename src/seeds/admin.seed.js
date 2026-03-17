@@ -14,7 +14,8 @@ const seedAdmin = async () => {
   await User.create({
     fullName: "Cleanse Admin",
     email: "admin@cleanse.com",
-    phone: "+919999999999",
+    phone: "9999999999",
+    countryCode: "+91",
     password: hashedPassword,
     role: ROLES.ADMIN,
     status: "active",

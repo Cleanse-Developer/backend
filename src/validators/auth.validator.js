@@ -1,4 +1,5 @@
 const { body } = require("express-validator");
+const { isValidPhone } = require("../utils/phoneUtils");
 
 const sendOtpRules = [
   body("identifier")
@@ -20,6 +21,18 @@ const verifyOtpRules = [
     .withMessage("OTP must be numeric"),
 ];
 
+const loginRules = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Valid email is required"),
+  body("password")
+    .notEmpty()
+    .withMessage("Password is required"),
+];
+
 const registerRules = [
   body("fullName")
     .trim()
@@ -36,11 +49,34 @@ const registerRules = [
     .trim()
     .notEmpty()
     .withMessage("Phone number is required")
-    .matches(/^\+?[0-9]{10,15}$/)
-    .withMessage("Valid phone number is required"),
+    .custom((value) => {
+      if (!isValidPhone(value)) {
+        throw new Error("Valid 10-digit Indian mobile number is required");
+      }
+      return true;
+    }),
+  body("countryCode")
+    .optional()
+    .trim()
+    .matches(/^\+\d{1,3}$/)
+    .withMessage("Country code must be in format +XX or +XXX (e.g. +91)"),
   body("password")
     .isLength({ min: 8 })
     .withMessage("Password must be at least 8 characters"),
 ];
 
-module.exports = { sendOtpRules, verifyOtpRules, registerRules };
+const checkAccountRules = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Valid email is required")
+    .normalizeEmail(),
+  body("phone")
+    .trim()
+    .notEmpty()
+    .withMessage("Phone number is required"),
+];
+
+module.exports = { sendOtpRules, verifyOtpRules, loginRules, registerRules, checkAccountRules };

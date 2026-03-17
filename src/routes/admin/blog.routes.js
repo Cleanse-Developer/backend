@@ -1,7 +1,11 @@
 const { Router } = require("express");
 const upload = require("../../middleware/upload");
+const Author = require("../../models/Author");
+const ApiResponse = require("../../utils/ApiResponse");
+const asyncHandler = require("../../utils/asyncHandler");
 const {
   listBlogs,
+  getBlog,
   createBlog,
   updateBlog,
   deleteBlog,
@@ -9,7 +13,20 @@ const {
 
 const router = Router();
 
+// Authors listing for blog form dropdown
+router.get(
+  "/authors",
+  asyncHandler(async (req, res) => {
+    const authors = await Author.find({ isActive: true })
+      .select("name role avatar")
+      .sort({ name: 1 })
+      .lean();
+    res.json(ApiResponse.ok(authors));
+  })
+);
+
 router.get("/", listBlogs);
+router.get("/:id", getBlog);
 router.post("/", upload.single("image"), createBlog);
 router.patch("/:id", upload.single("image"), updateBlog);
 router.delete("/:id", deleteBlog);

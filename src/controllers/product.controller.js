@@ -13,6 +13,7 @@ const listProducts = asyncHandler(async (req, res) => {
     page = 1,
     limit = 20,
     q,
+    bundleable,
   } = req.query;
 
   const filter = { isActive: true };
@@ -20,6 +21,11 @@ const listProducts = asyncHandler(async (req, res) => {
   // Tag filter
   if (tag) {
     filter.tag = tag;
+  }
+
+  // Bundleable filter
+  if (bundleable === "true") {
+    filter.isBundleable = true;
   }
 
   // Price range filter
@@ -61,16 +67,21 @@ const listProducts = asyncHandler(async (req, res) => {
       case "featured":
         sortOption = { isFeatured: -1, createdAt: -1 };
         break;
+      case "newest":
+        sortOption = { createdAt: -1 };
+        break;
     }
   }
 
-  const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
+  const pageNum = Math.max(1, Number(page) || 1);
+  const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
+  const skip = (pageNum - 1) * limitNum;
 
   const [products, total] = await Promise.all([
     Product.find(filter)
       .sort(sortOption)
       .skip(skip)
-      .limit(Number(limit))
+      .limit(limitNum)
       .select("-__v"),
     Product.countDocuments(filter),
   ]);
@@ -78,7 +89,7 @@ const listProducts = asyncHandler(async (req, res) => {
   res.json(
     ApiResponse.ok({
       products,
-      pagination: paginationMeta(total, page, limit),
+      pagination: paginationMeta(total, pageNum, limitNum),
     })
   );
 });
@@ -146,13 +157,15 @@ const searchProducts = asyncHandler(async (req, res) => {
     $text: { $search: q },
   };
 
-  const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
+  const pageNum = Math.max(1, Number(page) || 1);
+  const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
+  const skip = (pageNum - 1) * limitNum;
 
   const [products, total] = await Promise.all([
     Product.find(filter, { score: { $meta: "textScore" } })
       .sort({ score: { $meta: "textScore" } })
       .skip(skip)
-      .limit(Number(limit))
+      .limit(limitNum)
       .select("-__v"),
     Product.countDocuments(filter),
   ]);
@@ -160,7 +173,7 @@ const searchProducts = asyncHandler(async (req, res) => {
   res.json(
     ApiResponse.ok({
       products,
-      pagination: paginationMeta(total, page, limit),
+      pagination: paginationMeta(total, pageNum, limitNum),
     })
   );
 });

@@ -2,6 +2,7 @@ const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
+const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 
 // GET /api/user/profile
 const getProfile = asyncHandler(async (req, res) => {
@@ -21,7 +22,11 @@ const updateProfile = asyncHandler(async (req, res) => {
   const updates = {};
   if (fullName !== undefined) updates.fullName = fullName;
   if (email !== undefined) updates.email = email;
-  if (phone !== undefined) updates.phone = phone;
+  if (phone !== undefined) {
+    const parsed = parsePhone(phone);
+    updates.phone = parsed ? parsed.number : phone;
+    updates.countryCode = req.body.countryCode || (parsed ? parsed.countryCode : DEFAULT_COUNTRY_CODE);
+  }
   if (dateOfBirth !== undefined) updates.dateOfBirth = dateOfBirth;
 
   const user = await User.findByIdAndUpdate(req.user._id, updates, {

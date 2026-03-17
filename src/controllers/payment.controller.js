@@ -6,8 +6,10 @@ const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const razorpayService = require("../services/razorpay.service");
-const { createOrderId, calculatePricing } = require("../services/order.service");
+const { createOrderId } = require("../services/order.service");
+const { calculatePricing } = require("../services/pricing.service");
 const { awardPoints } = require("../services/loyalty.service");
+const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 
 const POPULATE_PRODUCT = {
   path: "items.product",
@@ -18,6 +20,15 @@ const POPULATE_PRODUCT = {
 const createRazorpayOrder = asyncHandler(async (req, res) => {
   const { shippingInfo, billingInfo, billingSameAsShipping, couponCode, giftWrap, giftMessage } =
     req.body;
+
+  // Normalise phone in shippingInfo
+  if (shippingInfo?.phone) {
+    const parsedPhone = parsePhone(shippingInfo.phone);
+    if (parsedPhone) {
+      shippingInfo.phone = parsedPhone.number;
+      shippingInfo.countryCode = shippingInfo.countryCode || parsedPhone.countryCode || DEFAULT_COUNTRY_CODE;
+    }
+  }
 
   // Get user's cart
   const cart = await Cart.findOne({ user: req.user._id }).populate(POPULATE_PRODUCT);
@@ -66,6 +77,15 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
 
   if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
     throw ApiError.badRequest("Payment verification details are required");
+  }
+
+  // Normalise phone in shippingInfo
+  if (shippingInfo?.phone) {
+    const parsedPhone = parsePhone(shippingInfo.phone);
+    if (parsedPhone) {
+      shippingInfo.phone = parsedPhone.number;
+      shippingInfo.countryCode = shippingInfo.countryCode || parsedPhone.countryCode || DEFAULT_COUNTRY_CODE;
+    }
   }
 
   // Verify signature
@@ -121,6 +141,8 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     },
     pricing: {
       subtotal: pricing.subtotal,
+      bundleDiscounts: pricing.bundleDiscounts,
+      bundleDiscountTotal: pricing.bundleDiscountTotal,
       tierDiscount: pricing.tierDiscount,
       tierPercent: pricing.tierPercent,
       tierLabel: pricing.tierLabel,
@@ -132,6 +154,8 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     },
     giftWrap: giftWrap || false,
     giftMessage,
+    contactEmail: shippingInfo.email,
+    contactPhone: shippingInfo.phone,
     status: "confirmed",
     loyaltyPointsEarned: pricing.loyaltyPoints,
   });

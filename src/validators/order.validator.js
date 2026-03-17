@@ -1,4 +1,5 @@
 const { body } = require("express-validator");
+const { isValidPhone } = require("../utils/phoneUtils");
 
 const placeOrderRules = [
   body("shippingInfo.fullName")
@@ -13,8 +14,17 @@ const placeOrderRules = [
   body("shippingInfo.phone")
     .notEmpty()
     .withMessage("Phone number is required")
-    .isString()
-    .trim(),
+    .custom((value) => {
+      if (!isValidPhone(value)) {
+        throw new Error("Valid 10-digit Indian mobile number is required");
+      }
+      return true;
+    }),
+  body("shippingInfo.countryCode")
+    .optional()
+    .trim()
+    .matches(/^\+\d{1,3}$/)
+    .withMessage("Country code must be in format +XX or +XXX (e.g. +91)"),
   body("shippingInfo.address1")
     .notEmpty()
     .withMessage("Address is required")

@@ -2,10 +2,26 @@ const Cart = require("../models/Cart");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
+const { calculatePricing } = require("../services/pricing.service");
 
 const POPULATE_PRODUCT = {
   path: "items.product",
   select: "name slug price images tag sizes totalStock",
+};
+
+/**
+ * Helper: return cart with a pricing preview.
+ * The preview uses no coupon — coupon is applied at checkout.
+ */
+const cartWithPricing = async (cart, userId) => {
+  if (!cart || !cart.items.length) {
+    return {
+      cart: cart || { items: [] },
+      pricing: null,
+    };
+  }
+  const pricing = await calculatePricing(cart, null, userId, cart.giftWrap);
+  return { cart, pricing };
 };
 
 // GET /api/cart
@@ -14,11 +30,8 @@ const getCart = asyncHandler(async (req, res) => {
     POPULATE_PRODUCT
   );
 
-  res.json(
-    ApiResponse.ok({
-      cart: cart || { items: [] },
-    })
-  );
+  const result = await cartWithPricing(cart, req.user._id);
+  res.json(ApiResponse.ok(result));
 });
 
 // POST /api/cart/items
@@ -51,7 +64,8 @@ const addItem = asyncHandler(async (req, res) => {
   await cart.save();
   await cart.populate(POPULATE_PRODUCT);
 
-  res.json(ApiResponse.ok({ cart }, "Item added to cart"));
+  const result = await cartWithPricing(cart, req.user._id);
+  res.json(ApiResponse.ok(result, "Item added to cart"));
 });
 
 // PATCH /api/cart/items/:itemId
@@ -77,7 +91,8 @@ const updateItem = asyncHandler(async (req, res) => {
   await cart.save();
   await cart.populate(POPULATE_PRODUCT);
 
-  res.json(ApiResponse.ok({ cart }, "Cart updated"));
+  const result = await cartWithPricing(cart, req.user._id);
+  res.json(ApiResponse.ok(result, "Cart updated"));
 });
 
 // DELETE /api/cart/items/:itemId
@@ -92,20 +107,45 @@ const removeItem = asyncHandler(async (req, res) => {
   await cart.save();
   await cart.populate(POPULATE_PRODUCT);
 
-  res.json(ApiResponse.ok({ cart }, "Item removed from cart"));
+  const result = await cartWithPricing(cart, req.user._id);
+  res.json(ApiResponse.ok(result, "Item removed from cart"));
 });
 
 // POST /api/cart/clear
 const clearCart = asyncHandler(async (req, res) => {
   const cart = await Cart.findOne({ user: req.user._id });
   if (!cart) {
-    return res.json(ApiResponse.ok({ cart: { items: [] } }, "Cart is empty"));
+    return res.json(
+      ApiResponse.ok({ cart: { items: [] }, pricing: null }, "Cart is empty")
+    );
   }
 
   cart.items = [];
   await cart.save();
 
-  res.json(ApiResponse.ok({ cart }, "Cart cleared"));
+  res.json(ApiResponse.ok({ cart, pricing: null }, "Cart cleared"));
 });
 
-module.exports = { getCart, addItem, updateItem, removeItem, clearCart };
+// POST /api/cart/preview-pricing — preview pricing with coupon code
+const previewPricing = asyncHandler(async (req, res) => {
+  const { couponCode, giftWrap } = req.body;
+
+  const cart = await Cart.findOne({ user: req.user._id }).populate(
+    POPULATE_PRODUCT
+  );
+
+  if (!cart || !cart.items.length) {
+    throw ApiError.badRequest("Cart is empty");
+  }
+
+  const pricing = await calculatePricing(
+    cart,
+    couponCode || null,
+    req.user._id,
+    giftWrap != null ? giftWrap : cart.giftWrap
+  );
+
+  res.json(ApiResponse.ok({ pricing }));
+});
+
+module.exports = { getCart, addItem, updateItem, removeItem, clearCart, previewPricing };

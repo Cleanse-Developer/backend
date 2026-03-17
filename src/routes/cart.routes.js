@@ -5,6 +5,7 @@ const {
   updateItem,
   removeItem,
   clearCart,
+  previewPricing,
 } = require("../controllers/cart.controller");
 const { addItemRules, updateItemRules } = require("../validators/cart.validator");
 const validate = require("../middleware/validate");
@@ -22,6 +23,9 @@ router.patch("/items/:itemId", updateItemRules, validate, updateItem);
 
 // DELETE /api/cart/items/:itemId — remove item from cart
 router.delete("/items/:itemId", removeItem);
+
+// POST /api/cart/preview-pricing — preview pricing with coupon
+router.post("/preview-pricing", previewPricing);
 
 // POST /api/cart/clear — clear all items
 router.post("/clear", clearCart);

@@ -1,6 +1,7 @@
 const Settings = require("../../models/Settings");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
+const { invalidateSettingsCache } = require("../settings.controller");
 
 // GET /api/admin/settings
 const getSettings = asyncHandler(async (req, res) => {
@@ -29,6 +30,7 @@ const updateSettings = asyncHandler(async (req, res) => {
 
   if (bulkOps.length > 0) {
     await Settings.bulkWrite(bulkOps);
+    invalidateSettingsCache();
   }
 
   // Return updated settings

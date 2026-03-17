@@ -7,7 +7,7 @@ const productQueryRules = [
     .withMessage("Tag must be Face Care, Hair Care, or Body Care"),
   query("sort")
     .optional()
-    .isIn(["price-low", "price-high", "name-az", "name-za", "featured"])
+    .isIn(["price-low", "price-high", "name-az", "name-za", "featured", "newest"])
     .withMessage("Invalid sort option"),
   query("priceRange")
     .optional()

@@ -10,6 +10,7 @@ const addressSchema = new mongoose.Schema(
     label: { type: String, required: true, trim: true, default: "Home" },
     fullName: { type: String, required: true, trim: true },
     phone: { type: String, required: true },
+    countryCode: { type: String, default: "+91" },
     address1: { type: String, required: true, trim: true },
     address2: { type: String, trim: true },
     city: { type: String, required: true, trim: true },

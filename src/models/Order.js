@@ -27,6 +27,7 @@ const orderSchema = new mongoose.Schema(
       fullName: { type: String, required: true },
       email: { type: String },
       phone: { type: String, required: true },
+      countryCode: { type: String, default: "+91" },
       address1: { type: String, required: true },
       address2: { type: String },
       city: { type: String, required: true },
@@ -52,6 +53,18 @@ const orderSchema = new mongoose.Schema(
     },
     pricing: {
       subtotal: { type: Number, required: true },
+      bundleDiscounts: [
+        {
+          bundleId: { type: mongoose.Schema.Types.ObjectId, ref: "Bundle" },
+          bundleName: { type: String },
+          discountType: { type: String, enum: ["percentage", "fixed"] },
+          discountValue: { type: Number },
+          productIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
+          bundleSubtotal: { type: Number },
+          discountAmount: { type: Number },
+        },
+      ],
+      bundleDiscountTotal: { type: Number, default: 0 },
       tierDiscount: { type: Number, default: 0 },
       tierPercent: { type: Number, default: 0 },
       tierLabel: { type: String },
@@ -88,6 +101,8 @@ const orderSchema = new mongoose.Schema(
         addedAt: { type: Date, default: Date.now },
       },
     ],
+    contactEmail: { type: String },
+    contactPhone: { type: String },
     loyaltyPointsEarned: { type: Number, default: 0 },
   },
   { timestamps: true }

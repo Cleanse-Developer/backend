@@ -1,4 +1,5 @@
 const { body } = require("express-validator");
+const { isValidPhone } = require("../utils/phoneUtils");
 
 const addressRules = [
   body("label")
@@ -14,8 +15,17 @@ const addressRules = [
   body("phone")
     .notEmpty()
     .withMessage("Phone is required")
-    .isString()
-    .trim(),
+    .custom((value) => {
+      if (!isValidPhone(value)) {
+        throw new Error("Valid 10-digit Indian mobile number is required");
+      }
+      return true;
+    }),
+  body("countryCode")
+    .optional()
+    .trim()
+    .matches(/^\+\d{1,3}$/)
+    .withMessage("Country code must be in format +XX or +XXX (e.g. +91)"),
   body("address1")
     .notEmpty()
     .withMessage("Address line 1 is required")
@@ -54,7 +64,19 @@ const addressRules = [
 const addressPatchRules = [
   body("label").optional().isString().trim(),
   body("fullName").optional().isString().trim(),
-  body("phone").optional().isString().trim(),
+  body("phone")
+    .optional()
+    .custom((value) => {
+      if (value && !isValidPhone(value)) {
+        throw new Error("Valid 10-digit Indian mobile number is required");
+      }
+      return true;
+    }),
+  body("countryCode")
+    .optional()
+    .trim()
+    .matches(/^\+\d{1,3}$/)
+    .withMessage("Country code must be in format +XX or +XXX (e.g. +91)"),
   body("address1").optional().isString().trim(),
   body("address2").optional().isString().trim(),
   body("city").optional().isString().trim(),

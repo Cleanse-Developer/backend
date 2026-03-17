@@ -19,9 +19,12 @@ router.use("/orders", require("./order.routes"));
 router.use("/customers", require("./customer.routes"));
 router.use("/coupons", require("./coupon.routes"));
 router.use("/blogs", require("./blog.routes"));
+router.use("/testimonials", require("./testimonial.routes"));
 router.use("/dashboard", require("./dashboard.routes"));
 router.use("/settings", require("./settings.routes"));
 router.use("/tickets", require("./ticket.routes"));
 router.use("/shipping", require("./shipping.routes"));
+router.use("/bundles", require("./bundle.routes"));
+router.use("/cms", require("./cms.routes"));
 
 module.exports = router;

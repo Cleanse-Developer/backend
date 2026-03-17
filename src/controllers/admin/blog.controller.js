@@ -49,6 +49,17 @@ const listBlogs = asyncHandler(async (req, res) => {
   );
 });
 
+// GET /api/admin/blogs/:id
+const getBlog = asyncHandler(async (req, res) => {
+  const blog = await Blog.findById(req.params.id)
+    .populate("author", "name role avatar")
+    .lean();
+  if (!blog) {
+    throw ApiError.notFound("Blog not found");
+  }
+  res.json(ApiResponse.ok(blog));
+});
+
 // POST /api/admin/blogs
 const createBlog = asyncHandler(async (req, res) => {
   const {
@@ -185,4 +196,4 @@ const deleteBlog = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok(null, "Blog deleted"));
 });
 
-module.exports = { listBlogs, createBlog, updateBlog, deleteBlog };
+module.exports = { listBlogs, getBlog, createBlog, updateBlog, deleteBlog };

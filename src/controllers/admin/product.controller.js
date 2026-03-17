@@ -83,6 +83,11 @@ const createProduct = asyncHandler(async (req, res) => {
     productData.seo = JSON.parse(productData.seo);
   }
 
+  // Parse tabHighlights if sent as JSON string
+  if (typeof productData.tabHighlights === "string") {
+    productData.tabHighlights = JSON.parse(productData.tabHighlights);
+  }
+
   const product = await Product.create(productData);
 
   res.status(201).json(ApiResponse.created(product, "Product created"));
@@ -110,6 +115,11 @@ const updateProduct = asyncHandler(async (req, res) => {
 
   const updateData = req.body;
 
+  // Parse images if sent as JSON string (for removing/reordering existing images)
+  if (typeof updateData.images === "string") {
+    updateData.images = JSON.parse(updateData.images);
+  }
+
   // Handle new image uploads
   if (req.files && req.files.length > 0) {
     const imageUploads = await Promise.all(
@@ -124,8 +134,11 @@ const updateProduct = asyncHandler(async (req, res) => {
       isPrimary: false,
     }));
 
-    // Append new images to existing ones
-    updateData.images = [...(product.images || []), ...newImages];
+    // Use parsed images array as base if provided, otherwise use existing
+    const baseImages = Array.isArray(updateData.images)
+      ? updateData.images
+      : [...(product.images || [])];
+    updateData.images = [...baseImages, ...newImages];
   }
 
   // Parse sizes if sent as JSON string
@@ -136,6 +149,11 @@ const updateProduct = asyncHandler(async (req, res) => {
   // Parse seo if sent as JSON string
   if (typeof updateData.seo === "string") {
     updateData.seo = JSON.parse(updateData.seo);
+  }
+
+  // Parse tabHighlights if sent as JSON string
+  if (typeof updateData.tabHighlights === "string") {
+    updateData.tabHighlights = JSON.parse(updateData.tabHighlights);
   }
 
   Object.assign(product, updateData);

@@ -4,8 +4,10 @@ const Coupon = require("../models/Coupon");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
-const { createOrderId, calculatePricing } = require("../services/order.service");
+const { createOrderId } = require("../services/order.service");
+const { calculatePricing } = require("../services/pricing.service");
 const { awardPoints } = require("../services/loyalty.service");
+const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 
 const POPULATE_PRODUCT = {
   path: "items.product",
@@ -28,6 +30,15 @@ const placeOrder = asyncHandler(async (req, res) => {
     throw ApiError.badRequest(
       "Only COD orders can be placed through this endpoint. Use the payment API for Razorpay."
     );
+  }
+
+  // Normalise phone in shippingInfo
+  if (shippingInfo?.phone) {
+    const parsedPhone = parsePhone(shippingInfo.phone);
+    if (parsedPhone) {
+      shippingInfo.phone = parsedPhone.number;
+      shippingInfo.countryCode = shippingInfo.countryCode || parsedPhone.countryCode || DEFAULT_COUNTRY_CODE;
+    }
   }
 
   // Get user's cart
@@ -70,6 +81,8 @@ const placeOrder = asyncHandler(async (req, res) => {
     },
     pricing: {
       subtotal: pricing.subtotal,
+      bundleDiscounts: pricing.bundleDiscounts,
+      bundleDiscountTotal: pricing.bundleDiscountTotal,
       tierDiscount: pricing.tierDiscount,
       tierPercent: pricing.tierPercent,
       tierLabel: pricing.tierLabel,
@@ -81,6 +94,8 @@ const placeOrder = asyncHandler(async (req, res) => {
     },
     giftWrap: giftWrap || false,
     giftMessage,
+    contactEmail: shippingInfo.email,
+    contactPhone: shippingInfo.phone,
     status: "pending",
     loyaltyPointsEarned: pricing.loyaltyPoints,
   });
