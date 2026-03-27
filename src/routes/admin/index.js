@@ -26,5 +26,7 @@ router.use("/tickets", require("./ticket.routes"));
 router.use("/shipping", require("./shipping.routes"));
 router.use("/bundles", require("./bundle.routes"));
 router.use("/cms", require("./cms.routes"));
+router.use("/spin-wheel", require("./spinWheel.routes"));
+router.use("/special-coupons", require("./specialCoupon.routes"));
 
 module.exports = router;

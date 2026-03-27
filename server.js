@@ -45,6 +45,11 @@ app.use(errorHandler);
 // Start server
 const start = async () => {
   await connectDB();
+
+  // Auto-seed spin wheel prizes if none exist
+  const seedSpinWheelPrizes = require("./src/seeds/spinWheelPrizes.seed");
+  seedSpinWheelPrizes().catch((err) => console.error("Spin wheel seed error:", err));
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT} (${process.env.NODE_ENV})`);
   });

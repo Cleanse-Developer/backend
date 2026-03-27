@@ -9,6 +9,7 @@ const seedProducts = require("./products.seed");
 const seedBlogs = require("./blogs.seed");
 const seedCoupons = require("./coupons.seed");
 const seedSettings = require("./settings.seed");
+const seedSpinWheelPrizes = require("./spinWheelPrizes.seed");
 
 const isReset = process.argv.includes("--reset");
 
@@ -33,6 +34,7 @@ const run = async () => {
     await seedBlogs();
     await seedCoupons();
     await seedSettings();
+    await seedSpinWheelPrizes();
 
     console.log("\nSeeding complete!\n");
     process.exit(0);

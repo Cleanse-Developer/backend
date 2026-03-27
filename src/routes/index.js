@@ -19,6 +19,7 @@ router.use("/contact", require("./contact.routes"));
 router.use("/shipping", require("./shipping.routes"));
 router.use("/bundles", require("./bundle.routes"));
 router.use("/pricing", require("./pricing.routes"));
+router.use("/special-coupons", require("./specialCoupon.routes").publicRouter);
 
 // Public webhook route (must be before auth middleware)
 router.use("/payments/webhook", require("./payment.routes").webhookRouter);
@@ -31,6 +32,7 @@ router.use("/addresses", auth, require("./address.routes"));
 router.use("/wishlist", auth, require("./wishlist.routes"));
 router.use("/reviews", auth, require("./review.routes"));
 router.use("/coupons", auth, require("./coupon.routes"));
+router.use("/special-coupons", auth, require("./specialCoupon.routes"));
 router.use("/payments", auth, require("./payment.routes"));
 router.use("/referral", auth, require("./referral.routes"));
 router.use("/loyalty", auth, require("./loyalty.routes"));

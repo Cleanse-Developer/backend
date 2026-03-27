@@ -21,6 +21,7 @@ const orderSchema = new mongoose.Schema(
         quantity: { type: Number, required: true, min: 1 },
         selectedSize: { type: String },
         image: { type: String },
+        isFreeGift: { type: Boolean, default: false },
       },
     ],
     shippingAddress: {
@@ -68,6 +69,24 @@ const orderSchema = new mongoose.Schema(
       tierDiscount: { type: Number, default: 0 },
       tierPercent: { type: Number, default: 0 },
       tierLabel: { type: String },
+      specialCouponDiscounts: [
+        {
+          specialCouponId: { type: mongoose.Schema.Types.ObjectId, ref: "SpecialCoupon" },
+          promotionType: { type: String },
+          title: { type: String },
+          code: { type: String },
+          discountAmount: { type: Number },
+          freeItems: [
+            {
+              productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+              productName: { type: String },
+              quantity: { type: Number },
+              unitPrice: { type: Number, default: 0 },
+            },
+          ],
+        },
+      ],
+      specialCouponDiscountTotal: { type: Number, default: 0 },
       couponDiscount: { type: Number, default: 0 },
       couponCode: { type: String },
       shippingCost: { type: Number, default: 0 },

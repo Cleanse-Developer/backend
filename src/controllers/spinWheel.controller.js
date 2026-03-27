@@ -1,76 +1,137 @@
 const Coupon = require("../models/Coupon");
 const Newsletter = require("../models/Newsletter");
+const SpinWheelPrize = require("../models/SpinWheelPrize");
+const SpinWheelEntry = require("../models/SpinWheelEntry");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const crypto = require("crypto");
 
-// Weighted prize pool
-const PRIZES = [
-  { label: "10% OFF",   value: "10off",    weight: 25, discountType: "percentage", discountValue: 10 },
-  { label: "FREE SHIP", value: "freeship", weight: 20, discountType: "free_shipping", discountValue: 0 },
-  { label: "5% OFF",    value: "5off",     weight: 30, discountType: "percentage", discountValue: 5 },
-  { label: "TRY AGAIN", value: "tryagain", weight: 15, discountType: null, discountValue: 0 },
-  { label: "15% OFF",   value: "15off",    weight: 5,  discountType: "percentage", discountValue: 15 },
-  { label: "FREE GIFT", value: "sample",   weight: 5,  discountType: "fixed", discountValue: 200 },
-];
-
-// In-memory rate limit: email -> last spin timestamp
-const spinHistory = new Map();
-const RATE_LIMIT_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// Periodic cleanup: remove expired entries every hour to prevent memory leak
-setInterval(() => {
-  const now = Date.now();
-  for (const [email, timestamp] of spinHistory) {
-    if (now - timestamp > RATE_LIMIT_MS) {
-      spinHistory.delete(email);
-    }
-  }
-}, 60 * 60 * 1000);
-
-function pickPrize() {
-  const totalWeight = PRIZES.reduce((sum, p) => sum + p.weight, 0);
-  let rand = Math.random() * totalWeight;
-  for (const prize of PRIZES) {
-    rand -= prize.weight;
-    if (rand <= 0) return prize;
-  }
-  return PRIZES[0];
-}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function generateCode(value) {
-  // Use crypto for better randomness + longer suffix to reduce collision chance
   const rand = crypto.randomBytes(4).toString("hex").toUpperCase();
   return `SPIN-${value.toUpperCase()}-${rand}`;
 }
 
-// POST /api/spin-wheel
-const spin = asyncHandler(async (req, res) => {
-  const { email } = req.body;
+async function pickPrize() {
+  const prizes = await SpinWheelPrize.find({ isActive: true }).lean();
+  if (!prizes.length) return null;
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const totalWeight = prizes.reduce((sum, p) => sum + p.weight, 0);
+  if (totalWeight <= 0) return prizes[0];
+
+  let rand = Math.random() * totalWeight;
+  for (const prize of prizes) {
+    rand -= prize.weight;
+    if (rand <= 0) return prize;
+  }
+  return prizes[0];
+}
+
+// GET /api/spin-wheel/prizes — public, returns active prizes for wheel rendering
+const getPrizes = asyncHandler(async (req, res) => {
+  const prizes = await SpinWheelPrize.find({ isActive: true })
+    .sort({ _id: 1 })
+    .select("label value color textColor")
+    .lean();
+
+  res.json(ApiResponse.ok({ prizes }));
+});
+
+// GET /api/spin-wheel/check?email=X — check if email already has an active spin
+const checkSpin = asyncHandler(async (req, res) => {
+  const { email } = req.query;
+
+  if (!email || !EMAIL_RE.test(email)) {
     throw ApiError.badRequest("Valid email is required");
   }
 
   const key = email.toLowerCase().trim();
 
-  // Rate limit: 1 spin per email per 24 hours
-  const lastSpin = spinHistory.get(key);
-  if (lastSpin && Date.now() - lastSpin < RATE_LIMIT_MS) {
-    throw ApiError.tooMany("You can only spin once every 24 hours");
+  const entry = await SpinWheelEntry.findOne({
+    email: key,
+    expiresAt: { $gt: new Date() },
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  if (entry) {
+    return res.json(
+      ApiResponse.ok({
+        hasSpun: true,
+        prize: {
+          label: entry.prize,
+          value: entry.prizeValue,
+          couponCode: entry.couponCode,
+        },
+      })
+    );
   }
 
-  const prize = pickPrize();
+  res.json(ApiResponse.ok({ hasSpun: false }));
+});
 
-  // "TRY AGAIN" -- no coupon, but still record the spin and subscribe
-  if (prize.value === "tryagain") {
-    spinHistory.set(key, Date.now());
+// POST /api/spin-wheel — spin the wheel
+const spin = asyncHandler(async (req, res) => {
+  let { email } = req.body;
 
-    // Subscribe without overwriting existing source
+  // If user is logged in, force their account email (prevent gaming)
+  if (req.user?.email) {
+    email = req.user.email;
+  }
+
+  if (!email || !EMAIL_RE.test(email)) {
+    throw ApiError.badRequest("Valid email is required");
+  }
+
+  const key = email.toLowerCase().trim();
+
+  // Check for existing active spin
+  const existing = await SpinWheelEntry.findOne({
+    email: key,
+    expiresAt: { $gt: new Date() },
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  if (existing) {
+    // Return existing result instead of an error (friendlier UX)
+    return res.json(
+      ApiResponse.ok(
+        {
+          prize: {
+            label: existing.prize,
+            value: existing.prizeValue,
+            couponCode: existing.couponCode,
+          },
+          alreadySpun: true,
+        },
+        existing.couponCode ? "You already have an active reward!" : "You already spun recently!"
+      )
+    );
+  }
+
+  const prize = await pickPrize();
+  if (!prize) {
+    throw ApiError.internal("No prizes configured. Please try again later.");
+  }
+
+  // "TRY AGAIN" — no coupon, 24h expiry so user can retry next day
+  if (!prize.discountType) {
+    const entry = await SpinWheelEntry.create({
+      email: key,
+      prize: prize.label,
+      prizeValue: prize.value,
+      couponCode: null,
+      user: req.user?._id || null,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+
+    // Subscribe to newsletter
     Newsletter.findOneAndUpdate(
       { email: key },
-      { $setOnInsert: { email: key, source: "spin-wheel", isActive: true } },
+      { $setOnInsert: { email: key, source: "spin_wheel", isActive: true } },
       { upsert: true }
     ).exec();
 
@@ -89,8 +150,8 @@ const spin = asyncHandler(async (req, res) => {
 
   while (attempts < MAX_ATTEMPTS) {
     code = generateCode(prize.value);
-    const existing = await Coupon.findOne({ code }).lean();
-    if (!existing) break;
+    const exists = await Coupon.findOne({ code }).lean();
+    if (!exists) break;
     attempts++;
     if (attempts >= MAX_ATTEMPTS) {
       throw ApiError.internal("Could not generate unique coupon code. Please try again.");
@@ -99,10 +160,10 @@ const spin = asyncHandler(async (req, res) => {
 
   const validTill = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-  await Coupon.create({
+  const coupon = await Coupon.create({
     code,
     description: `Spin Wheel reward: ${prize.label}`,
-    discountType: prize.discountType || "percentage",
+    discountType: prize.discountType,
     discountValue: prize.discountValue,
     validTill,
     usageLimit: 1,
@@ -110,13 +171,20 @@ const spin = asyncHandler(async (req, res) => {
     isActive: true,
   });
 
-  // Record spin AFTER successful coupon creation (so a failed DB write doesn't block retries)
-  spinHistory.set(key, Date.now());
+  await SpinWheelEntry.create({
+    email: key,
+    prize: prize.label,
+    prizeValue: prize.value,
+    couponCode: code,
+    coupon: coupon._id,
+    user: req.user?._id || null,
+    expiresAt: validTill,
+  });
 
-  // Subscribe without overwriting existing source
+  // Subscribe to newsletter
   Newsletter.findOneAndUpdate(
     { email: key },
-    { $setOnInsert: { email: key, source: "spin-wheel", isActive: true } },
+    { $setOnInsert: { email: key, source: "spin_wheel", isActive: true } },
     { upsert: true }
   ).exec();
 
@@ -128,4 +196,4 @@ const spin = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { spin };
+module.exports = { getPrizes, checkSpin, spin };

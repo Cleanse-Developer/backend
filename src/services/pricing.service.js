@@ -1,5 +1,6 @@
 const Bundle = require("../models/Bundle");
 const { validateCoupon } = require("./coupon.service");
+const { resolvePromotions } = require("./promotionResolver.service");
 const {
   DISCOUNT_TIERS,
   SHIPPING,
@@ -149,21 +150,23 @@ const calculateBundleDiscounts = async (cartItems) => {
  * 1. Subtotal = sum of all item prices
  * 2. Bundle discounts = per-bundle discounts on qualifying product groups
  * 3. Tier discount = percentage off the FULL subtotal (based on cart value tiers)
- * 4. Coupon discount = additional code-based discount
- * 5. Shipping = standard rate or free above threshold
- * 6. Gift wrap = optional flat fee
- * 7. Total = subtotal - bundleDiscount - tierDiscount - couponDiscount + shipping + giftWrap
+ * 4. Special coupon discounts (BXGY, volume, spend threshold, etc.)
+ * 5. Regular coupon discount = additional code-based discount (if not blocked by special promos)
+ * 6. Shipping = standard rate or free above threshold (with special promo adjustments)
+ * 7. Gift wrap = optional flat fee
+ * 8. Total = subtotal - all discounts + shipping + giftWrap
  *
  * Note: tier discount threshold is checked against the original subtotal (not after bundle discount).
- * This keeps the progress bar experience consistent — user sees "spend ₹X more for Y% off".
+ * This keeps the progress bar experience consistent -- user sees "spend X more for Y% off".
  *
  * @param {object} cart - Cart document with populated items (items[].product must have .price)
- * @param {string|null} couponCode - Coupon code to apply (optional)
+ * @param {string|null} couponCode - Regular coupon code to apply (optional)
  * @param {string} userId - User ID for coupon validation
  * @param {boolean} giftWrap - Whether gift wrap is requested
+ * @param {string|null} specialCouponCode - Special promotion code to apply (optional)
  * @returns {Promise<object>} Pricing breakdown
  */
-const calculatePricing = async (cart, couponCode, userId, giftWrap = false) => {
+const calculatePricing = async (cart, couponCode, userId, giftWrap = false, specialCouponCode = null) => {
   // 1. Calculate subtotal
   const subtotal = cart.items.reduce((sum, item) => {
     return sum + item.product.price * item.quantity;
@@ -188,17 +191,37 @@ const calculatePricing = async (cart, couponCode, userId, giftWrap = false) => {
     }
   }
 
-  // 4. Validate and calculate coupon discount
-  // Coupon applies to the effective amount (subtotal - bundleDiscount - tierDiscount)
+  // 4. Resolve special promotions (automatic + code-based)
+  // Effective subtotal after bundles + tier
+  const effectiveAfterBundleTier = Math.max(0, subtotal - bundleDiscountTotal - tierDiscount);
+
+  // Shipping cost (base, before any adjustments)
+  const baseShippingCost = subtotal >= SHIPPING.FREE_THRESHOLD ? 0 : SHIPPING.STANDARD_RATE;
+
+  const promotionResult = await resolvePromotions(
+    cart.items,
+    userId,
+    subtotal,
+    effectiveAfterBundleTier,
+    baseShippingCost,
+    specialCouponCode,
+    couponCode
+  );
+
+  const specialCouponDiscounts = promotionResult.applicableSpecialPromotions;
+  const specialCouponDiscountTotal = promotionResult.specialCouponDiscountTotal;
+
+  // 5. Validate and calculate regular coupon discount
+  // Coupon applies to the effective amount (after bundles + tier + special promos)
   let couponDiscount = 0;
   let appliedCouponCode = null;
   let couponDescription = null;
   let couponDiscountType = null;
 
-  if (couponCode) {
+  if (couponCode && promotionResult.regularCouponAllowed) {
     const effectiveSubtotal = Math.max(
       0,
-      subtotal - bundleDiscountTotal - tierDiscount
+      subtotal - bundleDiscountTotal - tierDiscount - specialCouponDiscountTotal
     );
     const couponResult = await validateCoupon(
       couponCode,
@@ -214,34 +237,39 @@ const calculatePricing = async (cart, couponCode, userId, giftWrap = false) => {
     }
   }
 
-  // 5. Shipping cost (based on original subtotal for threshold check)
-  const shippingCost =
-    subtotal >= SHIPPING.FREE_THRESHOLD ? 0 : SHIPPING.STANDARD_RATE;
+  // 6. Shipping cost (with adjustments from special promos and regular coupon)
+  let effectiveShippingCost = baseShippingCost;
 
-  // Handle free_shipping coupon type
-  let effectiveShippingCost = shippingCost;
+  // Special promo shipping adjustment
+  if (promotionResult.shippingAdjustment !== null) {
+    effectiveShippingCost = promotionResult.shippingAdjustment;
+  }
+
+  // Handle free_shipping regular coupon type
   if (couponDiscountType === "free_shipping") {
     effectiveShippingCost = 0;
   }
 
-  // 6. Gift wrap cost
+  // 7. Gift wrap cost
   const giftWrapCost = giftWrap ? GIFT_WRAP_COST : 0;
 
-  // 7. Total (never below 0)
+  // 8. Cap combined discounts so they never exceed subtotal
+  const totalDiscounts = bundleDiscountTotal + tierDiscount + specialCouponDiscountTotal + couponDiscount;
+  const cappedDiscounts = Math.min(totalDiscounts, subtotal);
+
+  // 9. Total (never below 0)
   const total = Math.max(
     0,
     subtotal -
-      bundleDiscountTotal -
-      tierDiscount -
-      couponDiscount +
+      cappedDiscounts +
       effectiveShippingCost +
       giftWrapCost
   );
 
-  // 8. Loyalty points (1 point per ₹10 spent)
+  // 9. Loyalty points (1 point per 10 spent)
   const loyaltyPoints = Math.floor(total / 10);
 
-  // 9. Tier progress info for the UI progress bar
+  // 10. Tier progress info for the UI progress bar
   const tierProgress = calculateTierProgress(subtotal);
 
   return {
@@ -251,6 +279,10 @@ const calculatePricing = async (cart, couponCode, userId, giftWrap = false) => {
     tierDiscount,
     tierPercent,
     tierLabel,
+    specialCouponDiscounts,
+    specialCouponDiscountTotal,
+    freeGifts: promotionResult.freeGifts,
+    promotionMessages: promotionResult.messages,
     couponDiscount,
     couponCode: appliedCouponCode,
     couponDescription,

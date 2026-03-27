@@ -3,6 +3,7 @@ const corsOptions = {
     const allowedOrigins = [
       process.env.FRONTEND_URL,
       process.env.ADMIN_URL,
+      "http://192.168.29.105:3000",
     ].filter(Boolean);
 
     // Allow requests with no origin (Postman, server-to-server)
