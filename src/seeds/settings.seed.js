@@ -23,11 +23,37 @@ const settings = [
   },
   {
     key: "loyalty_rate",
-    value: 0.1, // 1 point per ₹10
+    value: 0.1, // 1 point per ₹10 (legacy, see loyalty_config)
+  },
+  {
+    key: "loyalty_config",
+    value: {
+      enabled: true,
+      earnRatePerRupee: 0.1, // 1 point per ₹10
+      redeemRatePerPoint: 1, // 1 point = ₹1
+      minRedemptionPoints: 100,
+      maxPercentOfOrder: 50, // can pay up to 50% of subtotal with points
+      expiryDays: 365, // 0 = no expiry
+      showInProfile: true,
+    },
   },
   {
     key: "referral_reward",
-    value: 200,
+    value: 200, // legacy, see referral_config
+  },
+  {
+    key: "referral_config",
+    value: {
+      enabled: true,
+      rewardMode: "loyalty_points_referrer", // loyalty_points_referrer | loyalty_points_both | coupon_referrer | coupon_both
+      referrerRewardValue: 200,
+      refereeRewardValue: 100,
+      referrerCouponDiscountType: "fixed", // fixed | percentage
+      refereeCouponDiscountType: "fixed",
+      couponValidityDays: 30,
+      qualifyingOrderMinValue: 0,
+      codePrefix: "CLEANSE-",
+    },
   },
   {
     key: "site_name",

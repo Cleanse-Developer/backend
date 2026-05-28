@@ -11,12 +11,13 @@ const ORDER_STATUSES = [
   "return_requested",
   "return_approved",
   "returned",
+  "refund_initiated",
   "refunded",
 ];
 
 const PAYMENT_METHODS = ["razorpay", "cod", "upi"];
 
-const PAYMENT_STATUSES = ["pending", "paid", "failed", "refunded", "partially_refunded"];
+const PAYMENT_STATUSES = ["pending", "paid", "failed", "refund_initiated", "refunded", "partially_refunded"];
 
 const ROLES = {
   CUSTOMER: "customer",
@@ -44,6 +45,16 @@ const LOYALTY_RATE = 0.1; // 1 point per ₹10
 
 const REFERRAL_REWARD = 200; // ₹200
 
+const PAYMENT_SESSION_STATUSES = [
+  "pending",
+  "processing",
+  "completed",
+  "expired",
+  "failed",
+];
+
+const SESSION_TTL_MINUTES = 30;
+
 module.exports = {
   ORDER_STATUSES,
   PAYMENT_METHODS,
@@ -55,4 +66,6 @@ module.exports = {
   GIFT_WRAP_COST,
   LOYALTY_RATE,
   REFERRAL_REWARD,
+  PAYMENT_SESSION_STATUSES,
+  SESSION_TTL_MINUTES,
 };

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 
 const newsletterSchema = new mongoose.Schema(
   {
@@ -15,6 +16,13 @@ const newsletterSchema = new mongoose.Schema(
       default: "popup",
     },
     isActive: { type: Boolean, default: true },
+    unsubscribeToken: {
+      type: String,
+      unique: true,
+      sparse: true,
+      default: () => crypto.randomBytes(32).toString("hex"),
+    },
+    unsubscribedAt: { type: Date },
   },
   { timestamps: true }
 );

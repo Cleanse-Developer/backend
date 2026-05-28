@@ -5,6 +5,7 @@ const { createOTP, verifyOTP } = require("../services/otp.service");
 const { sendOTPEmail } = require("../services/email.service");
 const { generateAccessToken, generateRefreshToken } = require("../utils/generateToken");
 const generateReferralCode = require("../utils/generateReferralCode");
+const { applyReferralAtSignup } = require("../services/referral.service");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const asyncHandler = require("../utils/asyncHandler");
@@ -85,7 +86,7 @@ const loginWithPassword = asyncHandler(async (req, res) => {
 // ── POST /api/auth/register ──────────────────────────────────────────────────
 
 const register = asyncHandler(async (req, res) => {
-  const { fullName, email, phone, password } = req.body;
+  const { fullName, email, phone, password, referralCode: incomingReferralCode } = req.body;
 
   // Normalize inputs
   const normalizedEmail = email.toLowerCase().trim();
@@ -105,6 +106,7 @@ const register = asyncHandler(async (req, res) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);
+  const newReferralCode = await generateReferralCode();
 
   const user = await User.create({
     fullName,
@@ -112,13 +114,23 @@ const register = asyncHandler(async (req, res) => {
     phone: localPhone,
     countryCode: phoneCountryCode,
     password: hashedPassword,
-    referralCode: generateReferralCode(),
+    referralCode: newReferralCode,
   });
+
+  // Apply referral code if one was provided
+  let referralApplied = null;
+  if (incomingReferralCode && incomingReferralCode.trim()) {
+    const result = await applyReferralAtSignup(user, incomingReferralCode.trim());
+    referralApplied = result;
+  }
 
   const accessToken = await issueTokens(user, req, res);
 
   res.status(201).json(
-    ApiResponse.created({ user: sanitizeUser(user), accessToken }, "Registration successful")
+    ApiResponse.created(
+      { user: sanitizeUser(user), accessToken, referralApplied },
+      "Registration successful"
+    )
   );
 });
 
@@ -157,15 +169,23 @@ const verifyOtp = asyncHandler(async (req, res) => {
   const query = isEmail ? { email: identifier } : { phone: localPhone };
   let user = await User.findOne(query);
 
+  let referralApplied = null;
   if (!user) {
     const parsed = isEmail ? null : parsePhone(identifier);
+    const newReferralCode = await generateReferralCode();
     user = await User.create({
       fullName: "User",
       email: isEmail ? identifier : undefined,
       phone: isEmail ? undefined : localPhone,
       countryCode: isEmail ? undefined : (parsed?.countryCode || DEFAULT_COUNTRY_CODE),
-      referralCode: generateReferralCode(),
+      referralCode: newReferralCode,
     });
+
+    // Apply referral code if provided in OTP verification request
+    const incomingReferralCode = req.body.referralCode;
+    if (incomingReferralCode && incomingReferralCode.trim()) {
+      referralApplied = await applyReferralAtSignup(user, incomingReferralCode.trim());
+    }
   }
 
   await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
@@ -173,7 +193,10 @@ const verifyOtp = asyncHandler(async (req, res) => {
   const accessToken = await issueTokens(user, req, res);
 
   res.json(
-    ApiResponse.ok({ user: sanitizeUser(user), accessToken }, "Login successful")
+    ApiResponse.ok(
+      { user: sanitizeUser(user), accessToken, referralApplied },
+      "Login successful"
+    )
   );
 });
 

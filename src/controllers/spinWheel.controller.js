@@ -128,12 +128,12 @@ const spin = asyncHandler(async (req, res) => {
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
-    // Subscribe to newsletter
-    Newsletter.findOneAndUpdate(
+    // Subscribe to newsletter (best-effort, don't block spin result)
+    await Newsletter.findOneAndUpdate(
       { email: key },
       { $setOnInsert: { email: key, source: "spin_wheel", isActive: true } },
       { upsert: true }
-    ).exec();
+    ).catch(() => {});
 
     return res.json(
       ApiResponse.ok(
@@ -181,12 +181,12 @@ const spin = asyncHandler(async (req, res) => {
     expiresAt: validTill,
   });
 
-  // Subscribe to newsletter
-  Newsletter.findOneAndUpdate(
+  // Subscribe to newsletter (best-effort, don't block spin result)
+  await Newsletter.findOneAndUpdate(
     { email: key },
     { $setOnInsert: { email: key, source: "spin_wheel", isActive: true } },
     { upsert: true }
-  ).exec();
+  ).catch(() => {});
 
   res.json(
     ApiResponse.ok(

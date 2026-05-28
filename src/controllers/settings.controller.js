@@ -11,6 +11,7 @@ const PUBLIC_KEYS = [
   "whatsappNumber",
   "spinWheelEnabled",
   "newsletterPopupEnabled",
+  "newsletterPopupConfig",
   "siteName",
   "supportEmail",
   // CMS section keys
@@ -41,7 +42,7 @@ const CMS_DEFAULTS = {
     subtitle: "Natural Skin Care for Mindful Living",
     ctaText: "Shop Now",
     ctaLink: "/wardrobe",
-    backgroundImage: null,
+    carouselImages: [],
   },
   cmsFormula: {
     tagline:
@@ -205,6 +206,15 @@ const getPublicSettings = asyncHandler(async (req, res) => {
     whatsappNumber: settings.whatsappNumber || "",
     spinWheelEnabled: settings.spinWheelEnabled ?? true,
     newsletterPopupEnabled: settings.newsletterPopupEnabled ?? true,
+    newsletterPopupConfig: settings.newsletterPopupConfig || {
+      tag: "JOIN OUR COMMUNITY",
+      heading: "Get 10% Off",
+      description:
+        "Subscribe to our newsletter and receive exclusive offers, Ayurvedic tips, and new product updates.",
+      note: "No spam, unsubscribe anytime.",
+      image: null,
+      delaySeconds: 8,
+    },
   };
 
   // CMS section defaults — merge saved values over defaults

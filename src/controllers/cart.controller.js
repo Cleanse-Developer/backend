@@ -126,9 +126,14 @@ const clearCart = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ cart, pricing: null }, "Cart cleared"));
 });
 
-// POST /api/cart/preview-pricing -- preview pricing with coupon code
+// POST /api/cart/preview-pricing -- preview pricing with coupon code + loyalty
 const previewPricing = asyncHandler(async (req, res) => {
-  const { couponCode, giftWrap, specialCouponCode } = req.body;
+  const {
+    couponCode,
+    giftWrap,
+    specialCouponCode,
+    loyaltyPointsToRedeem = 0,
+  } = req.body;
 
   const cart = await Cart.findOne({ user: req.user._id }).populate(
     POPULATE_PRODUCT
@@ -143,7 +148,8 @@ const previewPricing = asyncHandler(async (req, res) => {
     couponCode || null,
     req.user._id,
     giftWrap != null ? giftWrap : cart.giftWrap,
-    specialCouponCode || null
+    specialCouponCode || null,
+    Number(loyaltyPointsToRedeem) || 0
   );
 
   res.json(ApiResponse.ok({ pricing }));

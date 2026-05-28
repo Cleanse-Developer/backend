@@ -1,9 +1,9 @@
 const { Router } = require("express");
-const { subscribe } = require("../controllers/newsletter.controller");
+const { subscribe, unsubscribe } = require("../controllers/newsletter.controller");
 
 const router = Router();
 
-// POST /api/newsletter/subscribe
 router.post("/subscribe", subscribe);
+router.get("/unsubscribe", unsubscribe);
 
 module.exports = router;

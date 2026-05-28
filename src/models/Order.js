@@ -46,11 +46,25 @@ const orderSchema = new mongoose.Schema(
       country: { type: String },
     },
     billingSameAsShipping: { type: Boolean, default: true },
+    paymentSession: { type: mongoose.Schema.Types.ObjectId, ref: "PaymentSession" },
     payment: {
       method: { type: String, enum: PAYMENT_METHODS, required: true },
       razorpayOrderId: { type: String },
       razorpayPaymentId: { type: String },
       status: { type: String, enum: PAYMENT_STATUSES, default: "pending" },
+      refunds: [
+        {
+          refundId: { type: String },
+          amount: { type: Number },
+          reason: { type: String },
+          status: {
+            type: String,
+            enum: ["initiated", "processed", "failed"],
+          },
+          initiatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
     },
     pricing: {
       subtotal: { type: Number, required: true },
@@ -91,6 +105,8 @@ const orderSchema = new mongoose.Schema(
       couponCode: { type: String },
       shippingCost: { type: Number, default: 0 },
       giftWrapCost: { type: Number, default: 0 },
+      loyaltyDiscount: { type: Number, default: 0 },
+      loyaltyPointsRedeemed: { type: Number, default: 0 },
       total: { type: Number, required: true },
     },
     giftWrap: { type: Boolean, default: false },

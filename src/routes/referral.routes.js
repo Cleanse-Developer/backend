@@ -1,9 +1,18 @@
 const { Router } = require("express");
-const { getReferralCode } = require("../controllers/referral.controller");
+const {
+  getReferralCode,
+  validateReferralCode,
+  getReferralHistory,
+} = require("../controllers/referral.controller");
 
-const router = Router();
+// Public routes (no auth) — used pre-signup
+const publicRouter = Router();
+publicRouter.post("/validate", validateReferralCode);
 
-// GET /api/referral/code — get or generate referral code (protected, auth applied in index)
-router.get("/code", getReferralCode);
+// Protected routes (auth applied at parent index)
+const protectedRouter = Router();
+protectedRouter.get("/code", getReferralCode);
+protectedRouter.get("/history", getReferralHistory);
 
-module.exports = router;
+module.exports = protectedRouter;
+module.exports.publicRouter = publicRouter;

@@ -20,11 +20,13 @@ router.use("/shipping", require("./shipping.routes"));
 router.use("/bundles", require("./bundle.routes"));
 router.use("/pricing", require("./pricing.routes"));
 router.use("/special-coupons", require("./specialCoupon.routes").publicRouter);
+router.use("/referral", require("./referral.routes").publicRouter);
 
 // Public webhook route (must be before auth middleware)
 router.use("/payments/webhook", require("./payment.routes").webhookRouter);
 
 // Protected customer routes
+router.use("/checkout", auth, require("./checkout.routes"));
 router.use("/cart", auth, require("./cart.routes"));
 router.use("/orders", auth, require("./order.routes"));
 router.use("/user", auth, require("./user.routes"));

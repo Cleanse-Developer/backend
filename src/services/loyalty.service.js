@@ -1,30 +1,314 @@
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
+const Settings = require("../models/Settings");
+
+const DEFAULT_CONFIG = {
+  enabled: true,
+  earnRatePerRupee: 0.1,
+  redeemRatePerPoint: 1,
+  minRedemptionPoints: 100,
+  maxPercentOfOrder: 50,
+  expiryDays: 365,
+  showInProfile: true,
+};
+
+/**
+ * Load loyalty config from Settings collection.
+ * Returns defaults if not configured.
+ */
+const getLoyaltyConfig = async () => {
+  const doc = await Settings.findOne({ key: "loyalty_config" }).lean();
+  if (!doc?.value) return { ...DEFAULT_CONFIG };
+  return { ...DEFAULT_CONFIG, ...doc.value };
+};
 
 /**
  * Award loyalty points to a user and record the transaction.
- * @param {string} userId - User ID
- * @param {number} points - Points to award
- * @param {string} orderId - Associated order ID (ObjectId)
- * @param {string} description - Description of the transaction
- * @returns {Promise<object>} Created LoyaltyTransaction
+ * @param {string} userId
+ * @param {number} points
+ * @param {string} orderId
+ * @param {string} description
+ * @param {string} type - "earned" | "referral_bonus" | "manual_adjustment"
  */
-const awardPoints = async (userId, points, orderId, description) => {
+const awardPoints = async (
+  userId,
+  points,
+  orderId,
+  description,
+  type = "earned"
+) => {
   if (points <= 0) return null;
 
   await User.findByIdAndUpdate(userId, {
     $inc: { loyaltyPoints: points },
   });
 
-  const transaction = await LoyaltyTransaction.create({
+  return LoyaltyTransaction.create({
     user: userId,
-    type: "earned",
+    type,
     points,
-    order: orderId,
-    description: description || `Earned ${points} points from order`,
+    order: orderId || undefined,
+    description: description || `Earned ${points} points`,
   });
-
-  return transaction;
 };
 
-module.exports = { awardPoints };
+/**
+ * Redeem loyalty points atomically. Returns null if user has insufficient balance.
+ * Caller MUST handle null return as a failure.
+ */
+const redeemPoints = async (userId, points, orderId, description) => {
+  if (points <= 0) return null;
+
+  // Atomic guard: only decrement if user has enough points
+  const updated = await User.findOneAndUpdate(
+    { _id: userId, loyaltyPoints: { $gte: points } },
+    { $inc: { loyaltyPoints: -points } },
+    { new: true }
+  );
+
+  if (!updated) return null;
+
+  try {
+    return await LoyaltyTransaction.create({
+      user: userId,
+      type: "redeemed",
+      points: -points,
+      order: orderId || undefined,
+      description: description || `Redeemed ${points} points`,
+    });
+  } catch (err) {
+    // Compensate: refund points if transaction record creation fails
+    await User.findByIdAndUpdate(userId, { $inc: { loyaltyPoints: points } });
+    throw err;
+  }
+};
+
+/**
+ * Reverse points from a cancelled/refunded order.
+ * Different from redeem: this is for reversing previously-awarded points.
+ */
+const reversePoints = async (userId, points, orderId, description) => {
+  if (points <= 0) return null;
+
+  await User.findByIdAndUpdate(userId, {
+    $inc: { loyaltyPoints: -points },
+  });
+
+  return LoyaltyTransaction.create({
+    user: userId,
+    type: "reversed",
+    points: -points,
+    order: orderId || undefined,
+    description: description || `Reversed ${points} points`,
+  });
+};
+
+/**
+ * Manually adjust a user's points (admin action). Can be positive or negative.
+ */
+const adjustPoints = async (userId, delta, description, adminUserId) => {
+  if (delta === 0) return null;
+
+  const user = await User.findOneAndUpdate(
+    delta < 0
+      ? { _id: userId, loyaltyPoints: { $gte: Math.abs(delta) } }
+      : { _id: userId },
+    { $inc: { loyaltyPoints: delta } },
+    { new: true }
+  );
+
+  if (!user) return null;
+
+  return LoyaltyTransaction.create({
+    user: userId,
+    type: "manual_adjustment",
+    points: delta,
+    description:
+      description ||
+      `Manual adjustment of ${delta > 0 ? "+" : ""}${delta} points by admin`,
+  });
+};
+
+/**
+ * Calculate the maximum number of points a user can redeem on an order
+ * given their balance, the order subtotal, and the loyalty config.
+ *
+ * Returns { maxPoints, maxDiscount } where both respect:
+ *  - user balance
+ *  - minRedemptionPoints (returns 0 if balance < min)
+ *  - maxPercentOfOrder cap on subtotal
+ */
+const calculateMaxRedeemable = (userBalance, orderSubtotal, config) => {
+  if (!config || !config.enabled) {
+    return { maxPoints: 0, maxDiscount: 0 };
+  }
+  if (userBalance < config.minRedemptionPoints) {
+    return { maxPoints: 0, maxDiscount: 0 };
+  }
+  if (orderSubtotal <= 0 || config.redeemRatePerPoint <= 0) {
+    return { maxPoints: 0, maxDiscount: 0 };
+  }
+
+  const maxDiscountFromPercent = Math.floor(
+    (orderSubtotal * config.maxPercentOfOrder) / 100
+  );
+  const maxPointsFromPercent = Math.floor(
+    maxDiscountFromPercent / config.redeemRatePerPoint
+  );
+
+  const maxPoints = Math.max(0, Math.min(userBalance, maxPointsFromPercent));
+  // Re-floor for safety; min ensures we don't allow a non-redeemable amount
+  const maxDiscount = Math.floor(maxPoints * config.redeemRatePerPoint);
+
+  // If max is below min, the user can't redeem at all on this order
+  if (maxPoints < config.minRedemptionPoints) {
+    return { maxPoints: 0, maxDiscount: 0 };
+  }
+
+  return { maxPoints, maxDiscount };
+};
+
+/**
+ * Validate a requested redemption against user balance and config.
+ * Returns { valid, discount, message }.
+ */
+const validateRedemption = async (userId, points, orderSubtotal) => {
+  const config = await getLoyaltyConfig();
+  if (!config.enabled) {
+    return { valid: false, discount: 0, message: "Loyalty program is disabled" };
+  }
+  if (!points || points <= 0) {
+    return { valid: false, discount: 0, message: "Enter points to redeem" };
+  }
+  if (points < config.minRedemptionPoints) {
+    return {
+      valid: false,
+      discount: 0,
+      message: `Minimum redemption is ${config.minRedemptionPoints} points`,
+    };
+  }
+
+  const user = await User.findById(userId).select("loyaltyPoints").lean();
+  if (!user) {
+    return { valid: false, discount: 0, message: "User not found" };
+  }
+  if (user.loyaltyPoints < points) {
+    return {
+      valid: false,
+      discount: 0,
+      message: `Insufficient balance (you have ${user.loyaltyPoints} points)`,
+    };
+  }
+
+  const { maxPoints, maxDiscount } = calculateMaxRedeemable(
+    user.loyaltyPoints,
+    orderSubtotal,
+    config
+  );
+
+  if (points > maxPoints) {
+    return {
+      valid: false,
+      discount: 0,
+      message: `You can redeem at most ${maxPoints} points on this order`,
+    };
+  }
+
+  return {
+    valid: true,
+    discount: points * config.redeemRatePerPoint,
+    message: null,
+    maxPoints,
+    maxDiscount,
+  };
+};
+
+/**
+ * Expire points older than expiryDays. Called by daily cron job.
+ * Strategy: for each user with points, find their oldest non-expired
+ * positive transactions and expire them up to the user's current balance.
+ * This is a FIFO model: oldest earned points expire first.
+ */
+const expirePoints = async () => {
+  const config = await getLoyaltyConfig();
+  if (!config.enabled || !config.expiryDays || config.expiryDays <= 0) {
+    return { processed: 0, expired: 0 };
+  }
+
+  const cutoffDate = new Date(
+    Date.now() - config.expiryDays * 24 * 60 * 60 * 1000
+  );
+
+  // Find users with a positive balance who have earned points before cutoff
+  const candidates = await LoyaltyTransaction.aggregate([
+    {
+      $match: {
+        type: { $in: ["earned", "referral_bonus", "manual_adjustment"] },
+        points: { $gt: 0 },
+        createdAt: { $lt: cutoffDate },
+      },
+    },
+    {
+      $group: {
+        _id: "$user",
+        expiringPoints: { $sum: "$points" },
+      },
+    },
+  ]);
+
+  let processed = 0;
+  let expired = 0;
+
+  for (const c of candidates) {
+    const user = await User.findById(c._id).select("loyaltyPoints");
+    if (!user || user.loyaltyPoints <= 0) continue;
+
+    // Already counted "spent" amount: subtract redeemed/reversed/expired
+    const spent = await LoyaltyTransaction.aggregate([
+      {
+        $match: {
+          user: user._id,
+          type: { $in: ["redeemed", "reversed", "expired"] },
+          createdAt: { $lt: cutoffDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$points" }, // negative numbers
+        },
+      },
+    ]);
+
+    const spentAmount = Math.abs(spent[0]?.total || 0);
+    const eligibleToExpire = Math.max(0, c.expiringPoints - spentAmount);
+    const toExpire = Math.min(eligibleToExpire, user.loyaltyPoints);
+
+    if (toExpire > 0) {
+      await User.findByIdAndUpdate(user._id, {
+        $inc: { loyaltyPoints: -toExpire },
+      });
+      await LoyaltyTransaction.create({
+        user: user._id,
+        type: "expired",
+        points: -toExpire,
+        description: `Expired ${toExpire} points (older than ${config.expiryDays} days)`,
+      });
+      expired += toExpire;
+    }
+    processed += 1;
+  }
+
+  return { processed, expired };
+};
+
+module.exports = {
+  awardPoints,
+  redeemPoints,
+  reversePoints,
+  adjustPoints,
+  calculateMaxRedeemable,
+  validateRedemption,
+  expirePoints,
+  getLoyaltyConfig,
+};

@@ -50,9 +50,54 @@ const start = async () => {
   const seedSpinWheelPrizes = require("./src/seeds/spinWheelPrizes.seed");
   seedSpinWheelPrizes().catch((err) => console.error("Spin wheel seed error:", err));
 
+  // Start Agenda.js job scheduler
+  const agenda = require("./src/config/agenda");
+  require("./src/jobs/expirePaymentSession");
+  require("./src/jobs/loyaltyExpiry");
+  await agenda.start();
+
+  // Schedule daily cleanup job if not already scheduled
+  const existingPurge = await agenda.jobs({ name: "purge-old-jobs" });
+  if (existingPurge.length === 0) {
+    await agenda.every("24 hours", "purge-old-jobs");
+  }
+
+  // Schedule daily loyalty expiry job
+  const existingExpiry = await agenda.jobs({ name: "expire-loyalty-points" });
+  if (existingExpiry.length === 0) {
+    await agenda.every("24 hours", "expire-loyalty-points");
+  }
+
+  // Recover any newsletter campaigns that were stuck in "sending" when the
+  // server last shut down. Mark them as failed so admins can manually re-send.
+  try {
+    const NewsletterCampaign = require("./src/models/NewsletterCampaign");
+    const stuck = await NewsletterCampaign.updateMany(
+      {
+        status: "sending",
+        updatedAt: { $lt: new Date(Date.now() - 60 * 60 * 1000) }, // 1h+ stale
+      },
+      { $set: { status: "failed" } }
+    );
+    if (stuck.modifiedCount > 0) {
+      console.log(`Recovered ${stuck.modifiedCount} stuck newsletter campaigns`);
+    }
+  } catch (err) {
+    console.error("Stuck campaign cleanup error:", err.message);
+  }
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT} (${process.env.NODE_ENV})`);
   });
+
+  // Graceful shutdown
+  const gracefulShutdown = async () => {
+    console.log("Shutting down gracefully...");
+    await agenda.stop();
+    process.exit(0);
+  };
+  process.on("SIGTERM", gracefulShutdown);
+  process.on("SIGINT", gracefulShutdown);
 };
 
 start();

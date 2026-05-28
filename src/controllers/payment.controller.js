@@ -10,7 +10,11 @@ const ApiResponse = require("../utils/ApiResponse");
 const razorpayService = require("../services/razorpay.service");
 const { createOrderId } = require("../services/order.service");
 const { calculatePricing } = require("../services/pricing.service");
-const { awardPoints } = require("../services/loyalty.service");
+const { awardPoints, redeemPoints } = require("../services/loyalty.service");
+const { processReferralReward } = require("../services/referral.service");
+const User = require("../models/User");
+const LoyaltyTransaction = require("../models/LoyaltyTransaction");
+const { enrichSpecialDiscounts } = require("../services/checkout.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
 
@@ -21,8 +25,16 @@ const POPULATE_PRODUCT = {
 
 // POST /api/payments/razorpay/create
 const createRazorpayOrder = asyncHandler(async (req, res) => {
-  const { shippingInfo, billingInfo, billingSameAsShipping, couponCode, specialCouponCode, giftWrap, giftMessage } =
-    req.body;
+  const {
+    shippingInfo,
+    billingInfo,
+    billingSameAsShipping,
+    couponCode,
+    specialCouponCode,
+    giftWrap,
+    giftMessage,
+    loyaltyPointsToRedeem = 0,
+  } = req.body;
 
   // Normalise phone in shippingInfo
   if (shippingInfo?.phone) {
@@ -40,8 +52,15 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Cart is empty");
   }
 
-  // Calculate pricing (with special coupons)
-  const pricing = await calculatePricing(cart, couponCode, req.user._id, giftWrap, specialCouponCode);
+  // Calculate pricing (with special coupons + loyalty)
+  const pricing = await calculatePricing(
+    cart,
+    couponCode,
+    req.user._id,
+    giftWrap,
+    specialCouponCode,
+    Number(loyaltyPointsToRedeem) || 0
+  );
 
   // Create Razorpay order (amount in paise)
   const amountInPaise = Math.round(pricing.total * 100);
@@ -77,6 +96,7 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     specialCouponCode,
     giftWrap,
     giftMessage,
+    loyaltyPointsToRedeem = 0,
   } = req.body;
 
   if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
@@ -110,8 +130,15 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Cart is empty");
   }
 
-  // Calculate pricing (with special coupons)
-  const pricing = await calculatePricing(cart, couponCode, req.user._id, giftWrap, specialCouponCode);
+  // Calculate pricing (with special coupons + loyalty)
+  const pricing = await calculatePricing(
+    cart,
+    couponCode,
+    req.user._id,
+    giftWrap,
+    specialCouponCode,
+    Number(loyaltyPointsToRedeem) || 0
+  );
 
   // Generate order ID
   const orderId = await createOrderId();
@@ -148,8 +175,28 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     }
   }
 
+  // Redeem loyalty points BEFORE creating the order so we can fail fast.
+  // The atomic decrement guards against insufficient balance / race conditions.
+  // If the user spent points elsewhere between pricing calc and now, this rejects.
+  let loyaltyRedemptionTx = null;
+  if (pricing.loyaltyPointsRedeemed > 0) {
+    loyaltyRedemptionTx = await redeemPoints(
+      req.user._id,
+      pricing.loyaltyPointsRedeemed,
+      null, // order id not yet known
+      `Redeemed ${pricing.loyaltyPointsRedeemed} points (pending order ${orderId})`
+    );
+    if (!loyaltyRedemptionTx) {
+      throw ApiError.conflict(
+        "Insufficient loyalty points balance. Please refresh and retry."
+      );
+    }
+  }
+
   // Create order
-  const order = await Order.create({
+  let order;
+  try {
+    order = await Order.create({
     orderId,
     user: req.user._id,
     items: orderItems,
@@ -175,6 +222,8 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
       couponCode: pricing.couponCode,
       shippingCost: pricing.shippingCost,
       giftWrapCost: pricing.giftWrapCost,
+      loyaltyDiscount: pricing.loyaltyDiscount || 0,
+      loyaltyPointsRedeemed: pricing.loyaltyPointsRedeemed || 0,
       total: pricing.total,
     },
     giftWrap: giftWrap || false,
@@ -184,6 +233,40 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     status: "confirmed",
     loyaltyPointsEarned: pricing.loyaltyPoints,
   });
+  } catch (orderErr) {
+    // Compensate the loyalty redemption that we already committed
+    if (loyaltyRedemptionTx) {
+      try {
+        await User.findByIdAndUpdate(req.user._id, {
+          $inc: { loyaltyPoints: pricing.loyaltyPointsRedeemed },
+        });
+        await LoyaltyTransaction.deleteOne({ _id: loyaltyRedemptionTx._id });
+      } catch (compErr) {
+        console.error(
+          `CRITICAL: failed to compensate loyalty redemption for failed order ${orderId}: ${compErr.message}`
+        );
+      }
+    }
+    throw orderErr;
+  }
+
+  // Link the loyalty redemption transaction to the now-created order
+  if (loyaltyRedemptionTx) {
+    try {
+      await LoyaltyTransaction.updateOne(
+        { _id: loyaltyRedemptionTx._id },
+        {
+          $set: {
+            order: order._id,
+            description: `Redeemed ${pricing.loyaltyPointsRedeemed} points on order ${orderId}`,
+          },
+        }
+      );
+    } catch (linkErr) {
+      // Non-critical: link failure means the txn shows "pending order" description
+      console.error("Loyalty redemption link error:", linkErr.message);
+    }
+  }
 
   // Update regular coupon usage if a coupon was applied
   if (pricing.couponCode) {
@@ -197,10 +280,10 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
 
     // Sync spin wheel entry redemption
     if (pricing.couponCode.startsWith("SPIN-")) {
-      SpinWheelEntry.findOneAndUpdate(
+      await SpinWheelEntry.findOneAndUpdate(
         { couponCode: pricing.couponCode },
         { isRedeemed: true, redeemedAt: new Date(), user: req.user._id }
-      ).exec();
+      );
     }
   }
 
@@ -233,10 +316,19 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     `Earned ${pricing.loyaltyPoints} points from order ${orderId}`
   );
 
+  // Process referral reward (best-effort)
+  try {
+    await processReferralReward(order._id, req.user._id);
+  } catch (err) {
+    console.error("Referral reward error:", err.message);
+  }
+
   res.json(ApiResponse.created({ order }, "Order placed successfully"));
 });
 
 // POST /api/payments/webhook
+// Session-aware, idempotent webhook handler.
+// Handles: payment.captured, order.paid, payment.failed, refund.processed
 const handleWebhook = async (req, res) => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -259,66 +351,213 @@ const handleWebhook = async (req, res) => {
     const event = req.body.event;
     const payload = req.body.payload;
 
-    if (event === "payment.captured") {
-      const paymentId = payload.payment.entity.id;
+    // Log every webhook payload for debugging
+    console.log(
+      `[Webhook] Event: ${event}, OrderId: ${payload?.payment?.entity?.order_id || payload?.refund?.entity?.payment_id || "unknown"}`
+    );
+
+    // --- payment.captured / order.paid ---
+    if (event === "payment.captured" || event === "order.paid") {
+      const razorpayPaymentId = payload.payment.entity.id;
       const razorpayOrderId = payload.payment.entity.order_id;
 
-      await Order.findOneAndUpdate(
-        { "payment.razorpayOrderId": razorpayOrderId },
-        {
-          "payment.razorpayPaymentId": paymentId,
-          "payment.status": "paid",
-          status: "confirmed",
+      const PaymentSession = require("../models/PaymentSession");
+      const session = await PaymentSession.findOne({ razorpayOrderId });
+
+      if (!session) {
+        // Legacy order or test event -- try old behavior as fallback
+        await Order.findOneAndUpdate(
+          { "payment.razorpayOrderId": razorpayOrderId },
+          {
+            "payment.razorpayPaymentId": razorpayPaymentId,
+            "payment.status": "paid",
+            status: "confirmed",
+          }
+        );
+        return res.status(200).json({ status: "ok" });
+      }
+
+      if (session.status === "completed") {
+        // Order already created -- ensure payment status is correct
+        await Order.findOneAndUpdate(
+          { paymentSession: session._id },
+          {
+            "payment.razorpayPaymentId": razorpayPaymentId,
+            "payment.status": "paid",
+          }
+        );
+        return res.status(200).json({ status: "ok" });
+      }
+
+      if (session.status === "processing") {
+        // Another handler (confirm endpoint) is already creating the order
+        return res.status(200).json({ status: "ok" });
+      }
+
+      if (session.status === "pending") {
+        // Client confirm either failed or hasn't arrived. Create the order.
+        const locked = await PaymentSession.findOneAndUpdate(
+          { _id: session._id, status: "pending" },
+          { $set: { status: "processing" } },
+          { new: true }
+        );
+
+        if (!locked) {
+          return res.status(200).json({ status: "ok" });
         }
+
+        const mongoose = require("mongoose");
+        const {
+          createOrderFromSession,
+          postOrderActions,
+        } = require("../services/checkout.service");
+        const razorpayService = require("../services/razorpay.service");
+
+        // Verify amount
+        try {
+          const rzpOrder = await razorpayService.fetchOrder(razorpayOrderId);
+          if (rzpOrder.amount !== locked.amountInPaise) {
+            console.error(
+              `Webhook amount mismatch: Razorpay=${rzpOrder.amount}, Session=${locked.amountInPaise}`
+            );
+            await PaymentSession.findByIdAndUpdate(locked._id, {
+              status: "pending",
+            });
+            return res.status(200).json({ status: "ok" });
+          }
+        } catch (err) {
+          console.error("Webhook: Failed to fetch Razorpay order:", err.message);
+          await PaymentSession.findByIdAndUpdate(locked._id, {
+            status: "pending",
+          });
+          return res.status(200).json({ status: "ok" });
+        }
+
+        const mongoSession = await mongoose.startSession();
+        try {
+          mongoSession.startTransaction();
+          const order = await createOrderFromSession(
+            locked,
+            {
+              method: "razorpay",
+              razorpayOrderId,
+              razorpayPaymentId,
+            },
+            mongoSession
+          );
+          await mongoSession.commitTransaction();
+          await postOrderActions(order, locked);
+        } catch (err) {
+          await mongoSession.abortTransaction();
+          await PaymentSession.findByIdAndUpdate(locked._id, {
+            status: "pending",
+          });
+          console.error("Webhook: Order creation failed:", err.message);
+        } finally {
+          mongoSession.endSession();
+        }
+
+        return res.status(200).json({ status: "ok" });
+      }
+
+      // expired or failed session -- log for investigation
+      console.error(
+        `Webhook: payment.captured for session in status "${session.status}" (session: ${session._id})`
       );
+      return res.status(200).json({ status: "ok" });
     }
 
+    // --- payment.failed ---
     if (event === "payment.failed") {
       const razorpayOrderId = payload.payment.entity.order_id;
 
-      await Order.findOneAndUpdate(
-        { "payment.razorpayOrderId": razorpayOrderId },
-        {
-          "payment.status": "failed",
-          status: "cancelled",
-        }
+      const PaymentSession = require("../models/PaymentSession");
+      const { releaseStock } = require("../services/stock.service");
+
+      // Atomic transition: only process if still pending
+      const session = await PaymentSession.findOneAndUpdate(
+        { razorpayOrderId, status: "pending" },
+        { $set: { status: "failed" } },
+        { new: true }
       );
+
+      if (!session) {
+        // No session or already handled -- fallback for legacy orders
+        const existingSession = await PaymentSession.findOne({ razorpayOrderId });
+        if (!existingSession) {
+          await Order.findOneAndUpdate(
+            { "payment.razorpayOrderId": razorpayOrderId },
+            { "payment.status": "failed", status: "cancelled" }
+          );
+        }
+        return res.status(200).json({ status: "ok" });
+      }
+
+      // Release reserved stock
+      await releaseStock(session.stockReservations);
+
+      // Cancel Agenda job
+      if (session.agendaJobId) {
+        try {
+          const agenda = require("../config/agenda");
+          const mongoose = require("mongoose");
+          await agenda.cancel({
+            _id: new mongoose.Types.ObjectId(session.agendaJobId),
+          });
+        } catch {
+          // Non-critical
+        }
+      }
+
+      return res.status(200).json({ status: "ok" });
     }
 
+    // --- refund.processed ---
+    if (event === "refund.processed") {
+      const refundEntity = payload.refund.entity;
+      const paymentId = refundEntity.payment_id;
+      const refundId = refundEntity.id;
+      const refundAmountPaise = refundEntity.amount;
+
+      const order = await Order.findOne({
+        "payment.razorpayPaymentId": paymentId,
+      });
+      if (!order) {
+        return res.status(200).json({ status: "ok" });
+      }
+
+      // Update matching refund entry
+      const refundEntry = order.payment.refunds?.find(
+        (r) => r.refundId === refundId
+      );
+      if (refundEntry) {
+        refundEntry.status = "processed";
+      }
+
+      // Determine if full or partial
+      const totalPaise = Math.round(order.pricing.total * 100);
+      const totalRefundedPaise = (order.payment.refunds || [])
+        .filter((r) => r.status === "processed" || r.refundId === refundId)
+        .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+      if (totalRefundedPaise >= totalPaise) {
+        order.payment.status = "refunded";
+        order.status = "refunded";
+      } else {
+        order.payment.status = "partially_refunded";
+      }
+
+      await order.save();
+      return res.status(200).json({ status: "ok" });
+    }
+
+    // Unhandled event -- return 200 to prevent Razorpay retries
     res.status(200).json({ status: "ok" });
   } catch (error) {
     console.error("Webhook error:", error);
-    res.status(500).json({ error: "Webhook processing failed" });
+    // Return 200 to prevent Razorpay retry storms on persistent errors
+    res.status(200).json({ status: "ok" });
   }
 };
-
-async function enrichSpecialDiscounts(discounts) {
-  if (!discounts || discounts.length === 0) return [];
-
-  const enriched = [];
-  for (const sp of discounts) {
-    const enrichedFreeItems = [];
-    if (sp.freeItems && sp.freeItems.length > 0) {
-      for (const fi of sp.freeItems) {
-        const prod = await Product.findById(fi.productId).select("name price").lean();
-        enrichedFreeItems.push({
-          productId: fi.productId,
-          productName: prod?.name || "Gift",
-          quantity: fi.quantity || 1,
-          unitPrice: prod?.price || 0,
-        });
-      }
-    }
-    enriched.push({
-      specialCouponId: sp.specialCouponId,
-      promotionType: sp.promotionType,
-      title: sp.title,
-      code: sp.code || null,
-      discountAmount: sp.discountAmount,
-      freeItems: enrichedFreeItems,
-    });
-  }
-  return enriched;
-}
 
 module.exports = { createRazorpayOrder, verifyRazorpayPayment, handleWebhook };

@@ -20,7 +20,7 @@ const reviewSchema = new mongoose.Schema(
     title: { type: String, maxlength: 100 },
     text: { type: String, required: true, maxlength: 2000 },
     isVerifiedPurchase: { type: Boolean, default: false },
-    isApproved: { type: Boolean, default: true },
+    isApproved: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

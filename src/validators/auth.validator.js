@@ -63,6 +63,13 @@ const registerRules = [
   body("password")
     .isLength({ min: 8 })
     .withMessage("Password must be at least 8 characters"),
+  body("referralCode")
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage("Referral code is too long")
+    .matches(/^[A-Za-z0-9-]+$/)
+    .withMessage("Invalid referral code format"),
 ];
 
 const checkAccountRules = [

@@ -17,11 +17,16 @@ const getTransporter = () => {
   return transporter;
 };
 
+const isDev = () =>
+  process.env.NODE_ENV === "development" ||
+  !process.env.SMTP_PASS ||
+  process.env.SMTP_PASS === "your_app_password";
+
 const sendEmail = async ({ to, subject, html }) => {
   // In development, just log the email
-  if (process.env.NODE_ENV === "development" || !process.env.SMTP_PASS || process.env.SMTP_PASS === "your_app_password") {
+  if (isDev()) {
     console.log(`[EMAIL] To: ${to} | Subject: ${subject}`);
-    console.log(`[EMAIL] Body: ${html}`);
+    console.log(`[EMAIL] Body: ${html.substring(0, 200)}...`);
     return { accepted: [to] };
   }
 
@@ -66,4 +71,86 @@ const sendOrderConfirmation = async (to, order) => {
   });
 };
 
-module.exports = { sendEmail, sendOTPEmail, sendOrderConfirmation };
+const buildUnsubscribeUrl = (token) => {
+  const base = process.env.PUBLIC_API_BASE || process.env.FRONTEND_URL || "";
+  // Backend route: GET /api/newsletter/unsubscribe?token=...
+  if (base.includes("/api")) {
+    return `${base.replace(/\/$/, "")}/newsletter/unsubscribe?token=${token}`;
+  }
+  return `${(base || "").replace(/\/$/, "")}/api/newsletter/unsubscribe?token=${token}`;
+};
+
+const renderNewsletterFooter = (unsubscribeUrl) => `
+  <hr style="border: none; border-top: 1px solid #e5e0d8; margin: 32px 0 16px;" />
+  <p style="font-size: 11px; color: #999; text-align: center; line-height: 1.5;">
+    You're receiving this email because you subscribed to Cleanse Ayurveda.<br>
+    <a href="${unsubscribeUrl}" style="color: #999; text-decoration: underline;">Unsubscribe</a>
+  </p>
+`;
+
+const sendWelcomeEmail = async (subscriber) => {
+  const unsubscribeUrl = buildUnsubscribeUrl(subscriber.unsubscribeToken);
+  return sendEmail({
+    to: subscriber.email,
+    subject: "Welcome to Cleanse Ayurveda",
+    html: `
+      <div style="font-family: Georgia, serif; max-width: 540px; margin: 0 auto; padding: 24px; color: #2a2018;">
+        <h2 style="color: #4F2C22;">Welcome to Cleanse Ayurveda</h2>
+        <p>Thanks for subscribing! You'll be the first to know about new products, ayurvedic tips, and exclusive offers.</p>
+        <p>In the meantime, explore our collection at <a href="${process.env.FRONTEND_URL || "/"}">${process.env.FRONTEND_URL || "cleanseayurveda.com"}</a>.</p>
+        ${renderNewsletterFooter(unsubscribeUrl)}
+      </div>
+    `,
+  });
+};
+
+const sendNewsletterEmail = async ({ to, subject, html, unsubscribeToken }) => {
+  const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken);
+  const wrappedHtml = `
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #2a2018;">
+      ${html}
+      ${renderNewsletterFooter(unsubscribeUrl)}
+    </div>
+  `;
+  return sendEmail({ to, subject, html: wrappedHtml });
+};
+
+/**
+ * Send a campaign to a list of subscribers with simple rate limiting.
+ * Returns { sent, failed, errors }.
+ */
+const sendBulkNewsletter = async (subject, html, subscribers, { onProgress } = {}) => {
+  const results = { sent: 0, failed: 0, errors: [] };
+  // Simple sequential delay-based throttle (~10/sec). Replace with a proper
+  // queue if higher throughput needed.
+  for (let i = 0; i < subscribers.length; i++) {
+    const sub = subscribers[i];
+    try {
+      await sendNewsletterEmail({
+        to: sub.email,
+        subject,
+        html,
+        unsubscribeToken: sub.unsubscribeToken,
+      });
+      results.sent += 1;
+    } catch (err) {
+      results.failed += 1;
+      results.errors.push({ email: sub.email, error: err.message });
+    }
+    if (onProgress) onProgress(i + 1, subscribers.length);
+    // ~100ms between sends = ~10/sec
+    if (i < subscribers.length - 1) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  return results;
+};
+
+module.exports = {
+  sendEmail,
+  sendOTPEmail,
+  sendOrderConfirmation,
+  sendWelcomeEmail,
+  sendNewsletterEmail,
+  sendBulkNewsletter,
+};

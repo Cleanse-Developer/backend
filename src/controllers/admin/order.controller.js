@@ -1,4 +1,11 @@
 const Order = require("../../models/Order");
+const Product = require("../../models/Product");
+const Coupon = require("../../models/Coupon");
+const SpecialCoupon = require("../../models/SpecialCoupon");
+const User = require("../../models/User");
+const LoyaltyTransaction = require("../../models/LoyaltyTransaction");
+const { reversePoints } = require("../../services/loyalty.service");
+const { reverseReferralReward } = require("../../services/referral.service");
 const asyncHandler = require("../../utils/asyncHandler");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
@@ -17,7 +24,9 @@ const VALID_TRANSITIONS = {
   delivered: ["return_requested"],
   return_requested: ["return_approved", "delivered"],
   return_approved: ["returned"],
-  returned: ["refunded"],
+  returned: ["refund_initiated"],
+  refund_initiated: ["refunded"],
+  cancelled: ["refund_initiated"],
 };
 
 // GET /api/admin/orders
@@ -165,7 +174,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
 // POST /api/admin/orders/:id/refund
 const processRefund = asyncHandler(async (req, res) => {
-  const { amount } = req.body;
+  const { amount, reason } = req.body;
 
   const order = await Order.findById(req.params.id);
 
@@ -177,35 +186,172 @@ const processRefund = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Refunds are only supported for Razorpay payments");
   }
 
-  if (order.payment.status !== "paid") {
-    throw ApiError.badRequest("Order payment must be in 'paid' status to process a refund");
+  const refundableStatuses = ["paid", "partially_refunded"];
+  if (!refundableStatuses.includes(order.payment.status)) {
+    throw ApiError.badRequest(
+      `Order payment must be in 'paid' or 'partially_refunded' status to process a refund`
+    );
   }
 
   if (!order.payment.razorpayPaymentId) {
     throw ApiError.badRequest("No Razorpay payment ID found for this order");
   }
 
-  // Amount in paise; if not provided, full refund
+  // Idempotency: check for duplicate initiated refund with same amount
   const refundAmountPaise = amount
     ? Math.round(amount * 100)
-    : undefined;
+    : Math.round(order.pricing.total * 100);
+
+  const duplicateRefund = order.payment.refunds?.find(
+    (r) => r.status === "initiated" && r.amount === refundAmountPaise
+  );
+  if (duplicateRefund) {
+    throw ApiError.conflict("A refund for this amount is already in progress");
+  }
 
   const refund = await issueRefund(
     order.payment.razorpayPaymentId,
-    refundAmountPaise
+    amount ? refundAmountPaise : undefined
   );
 
-  order.payment.status = "refunded";
-  order.status = "refunded";
+  // Record refund in history
+  order.payment.refunds.push({
+    refundId: refund.id,
+    amount: refundAmountPaise,
+    reason: reason || (amount ? `Partial refund: Rs ${amount}` : "Full refund"),
+    status: "initiated",
+    initiatedBy: req.user._id,
+  });
+
+  // Set intermediate status (webhook will finalize to "refunded")
+  order.status = "refund_initiated";
+  order.payment.status = "refund_initiated";
+
+  const isFullRefund = !amount || amount >= order.pricing.total;
+
   order.adminNotes.push({
-    note: `Refund processed: ${amount ? `Rs ${amount}` : "Full refund"}. Refund ID: ${refund.id}`,
+    note: `Refund initiated: ${isFullRefund ? "Full refund" : `Rs ${amount}`}. Refund ID: ${refund.id}`,
+    addedBy: req.user._id,
+    addedAt: new Date(),
+  });
+
+  // Save immediately after refund so the record is persisted even if
+  // subsequent reversal operations fail.
+  await order.save();
+
+  // For full refund: restore stock, reverse coupons, reverse loyalty.
+  // These are best-effort: failures are logged but don't fail the refund.
+  if (isFullRefund) {
+    try {
+      for (const item of order.items) {
+        if (item.isFreeGift || !item.selectedSize) continue;
+        await Product.findOneAndUpdate(
+          { _id: item.product, "sizes.label": item.selectedSize },
+          { $inc: { "sizes.$.stock": item.quantity } }
+        );
+        await Product.updateOne(
+          { _id: item.product },
+          [{ $set: { totalStock: { $sum: "$sizes.stock" } } }]
+        );
+      }
+
+      if (order.pricing.couponCode) {
+        const coupon = await Coupon.findOne({ code: order.pricing.couponCode });
+        if (coupon) {
+          const idx = coupon.usedBy.findIndex(
+            (e) => e.user.toString() === order.user.toString()
+          );
+          if (idx !== -1) {
+            coupon.usedBy.splice(idx, 1);
+            coupon.usageCount = Math.max(0, coupon.usageCount - 1);
+            await coupon.save();
+          }
+        }
+      }
+
+      if (order.pricing.specialCouponDiscounts?.length > 0) {
+        for (const sp of order.pricing.specialCouponDiscounts) {
+          const promo = await SpecialCoupon.findById(sp.specialCouponId);
+          if (promo) {
+            const idx = promo.usedBy.findIndex(
+              (e) => e.user.toString() === order.user.toString()
+            );
+            if (idx !== -1) {
+              promo.usedBy.splice(idx, 1);
+              promo.usageCount = Math.max(0, promo.usageCount - 1);
+              await promo.save();
+            }
+          }
+        }
+      }
+
+      if (order.loyaltyPointsEarned > 0) {
+        await reversePoints(
+          order.user,
+          order.loyaltyPointsEarned,
+          order._id,
+          `Reversed ${order.loyaltyPointsEarned} points from refunded order ${order.orderId}`
+        );
+      }
+
+      // Restore any redeemed loyalty points
+      const redeemed = order.pricing?.loyaltyPointsRedeemed || 0;
+      if (redeemed > 0) {
+        await User.findByIdAndUpdate(order.user, {
+          $inc: { loyaltyPoints: redeemed },
+        });
+        await LoyaltyTransaction.create({
+          user: order.user,
+          type: "manual_adjustment",
+          points: redeemed,
+          order: order._id,
+          description: `Refunded ${redeemed} redeemed points from refunded order ${order.orderId}`,
+        });
+      }
+
+      // Reverse referral reward if this was the qualifying order
+      await reverseReferralReward(order._id);
+    } catch (reversalErr) {
+      console.error(`Reversal error for order ${order.orderId}:`, reversalErr.message);
+    }
+  }
+
+  res.json(ApiResponse.ok({ order, refund }, "Refund initiated successfully"));
+});
+
+// PATCH /api/admin/orders/:id/return
+const approveReturn = asyncHandler(async (req, res) => {
+  const { action, note } = req.body;
+
+  const order = await Order.findById(req.params.id);
+
+  if (!order) {
+    throw ApiError.notFound("Order not found");
+  }
+
+  if (order.status !== "return_requested") {
+    throw ApiError.badRequest("Order is not in return_requested status");
+  }
+
+  if (action === "approve") {
+    order.returnRequest.status = "approved";
+    order.status = "return_approved";
+  } else if (action === "reject") {
+    order.returnRequest.status = "rejected";
+    order.status = "delivered";
+  } else {
+    throw ApiError.badRequest('Action must be "approve" or "reject"');
+  }
+
+  order.adminNotes.push({
+    note: `Return ${action}d${note ? `: ${note}` : ""}`,
     addedBy: req.user._id,
     addedAt: new Date(),
   });
 
   await order.save();
 
-  res.json(ApiResponse.ok({ order, refund }, "Refund processed successfully"));
+  res.json(ApiResponse.ok({ order }, `Return ${action}d successfully`));
 });
 
 // PATCH /api/admin/orders/:id/notes
@@ -238,5 +384,6 @@ module.exports = {
   getOrder,
   updateOrderStatus,
   processRefund,
+  approveReturn,
   addOrderNote,
 };

@@ -1,14 +1,24 @@
+const mongoose = require("mongoose");
 const Cart = require("../models/Cart");
 const Order = require("../models/Order");
 const Coupon = require("../models/Coupon");
 const SpecialCoupon = require("../models/SpecialCoupon");
 const Product = require("../models/Product");
+const User = require("../models/User");
+const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const { createOrderId } = require("../services/order.service");
 const { calculatePricing } = require("../services/pricing.service");
-const { awardPoints } = require("../services/loyalty.service");
+const { awardPoints, reversePoints } = require("../services/loyalty.service");
+const {
+  processReferralReward,
+  reverseReferralReward,
+} = require("../services/referral.service");
+const { enrichSpecialDiscounts } = require("../services/checkout.service");
+const { validateStock, reserveStock } = require("../services/stock.service");
+const razorpayService = require("../services/razorpay.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
 
@@ -28,6 +38,7 @@ const placeOrder = asyncHandler(async (req, res) => {
     specialCouponCode,
     giftWrap,
     giftMessage,
+    loyaltyPointsToRedeem = 0,
   } = req.body;
 
   if (paymentMethod !== "cod") {
@@ -52,8 +63,28 @@ const placeOrder = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Cart is empty");
   }
 
-  // Calculate pricing (now includes special coupons)
-  const pricing = await calculatePricing(cart, couponCode, req.user._id, giftWrap, specialCouponCode);
+  // Validate stock availability
+  const stockCheck = await validateStock(cart.items);
+  if (!stockCheck.valid) {
+    throw ApiError.conflict("Some items are out of stock", stockCheck.insufficientItems);
+  }
+
+  // Calculate pricing (now includes special coupons + loyalty redemption)
+  const pricing = await calculatePricing(
+    cart,
+    couponCode,
+    req.user._id,
+    giftWrap,
+    specialCouponCode,
+    Number(loyaltyPointsToRedeem) || 0
+  );
+
+  // Build stock reservation items
+  const stockItems = cart.items.map((item) => ({
+    productId: item.product._id,
+    sizeLabel: item.selectedSize || item.product.sizes?.[0]?.label,
+    quantity: item.quantity,
+  })).filter((item) => item.sizeLabel);
 
   // Generate order ID
   const orderId = await createOrderId();
@@ -90,89 +121,175 @@ const placeOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  // Create order
-  const order = await Order.create({
-    orderId,
-    user: req.user._id,
-    items: orderItems,
-    shippingAddress: shippingInfo,
-    billingAddress: billingSameAsShipping ? shippingInfo : billingInfo,
-    billingSameAsShipping,
-    payment: {
-      method: "cod",
-      status: "pending",
-    },
-    pricing: {
-      subtotal: pricing.subtotal,
-      bundleDiscounts: pricing.bundleDiscounts,
-      bundleDiscountTotal: pricing.bundleDiscountTotal,
-      tierDiscount: pricing.tierDiscount,
-      tierPercent: pricing.tierPercent,
-      tierLabel: pricing.tierLabel,
-      specialCouponDiscounts: await enrichSpecialDiscounts(pricing.specialCouponDiscounts),
-      specialCouponDiscountTotal: pricing.specialCouponDiscountTotal || 0,
-      couponDiscount: pricing.couponDiscount,
-      couponCode: pricing.couponCode,
-      shippingCost: pricing.shippingCost,
-      giftWrapCost: pricing.giftWrapCost,
-      total: pricing.total,
-    },
-    giftWrap: giftWrap || false,
-    giftMessage,
-    contactEmail: shippingInfo.email,
-    contactPhone: shippingInfo.phone,
-    status: "pending",
-    loyaltyPointsEarned: pricing.loyaltyPoints,
-  });
+  // All critical operations inside a transaction
+  const mongoSession = await mongoose.startSession();
+  let order;
 
-  // Update regular coupon usage if a coupon was applied
-  if (pricing.couponCode) {
-    await Coupon.findOneAndUpdate(
-      { code: pricing.couponCode },
-      {
-        $inc: { usageCount: 1 },
-        $push: { usedBy: { user: req.user._id, usedAt: new Date() } },
-      }
+  try {
+    mongoSession.startTransaction();
+
+    // 1. Reserve stock atomically
+    await reserveStock(stockItems, mongoSession);
+
+    // 2. Create order
+    [order] = await Order.create(
+      [
+        {
+          orderId,
+          user: req.user._id,
+          items: orderItems,
+          shippingAddress: shippingInfo,
+          billingAddress: billingSameAsShipping ? shippingInfo : billingInfo,
+          billingSameAsShipping,
+          payment: {
+            method: "cod",
+            status: "pending",
+          },
+          pricing: {
+            subtotal: pricing.subtotal,
+            bundleDiscounts: pricing.bundleDiscounts,
+            bundleDiscountTotal: pricing.bundleDiscountTotal,
+            tierDiscount: pricing.tierDiscount,
+            tierPercent: pricing.tierPercent,
+            tierLabel: pricing.tierLabel,
+            specialCouponDiscounts: await enrichSpecialDiscounts(pricing.specialCouponDiscounts),
+            specialCouponDiscountTotal: pricing.specialCouponDiscountTotal || 0,
+            couponDiscount: pricing.couponDiscount,
+            couponCode: pricing.couponCode,
+            shippingCost: pricing.shippingCost,
+            giftWrapCost: pricing.giftWrapCost,
+            loyaltyDiscount: pricing.loyaltyDiscount || 0,
+            loyaltyPointsRedeemed: pricing.loyaltyPointsRedeemed || 0,
+            total: pricing.total,
+          },
+          giftWrap: giftWrap || false,
+          giftMessage,
+          contactEmail: shippingInfo.email,
+          contactPhone: shippingInfo.phone,
+          status: "pending",
+          loyaltyPointsEarned: pricing.loyaltyPoints,
+        },
+      ],
+      { session: mongoSession }
     );
 
-    // Sync spin wheel entry redemption
-    if (pricing.couponCode.startsWith("SPIN-")) {
-      SpinWheelEntry.findOneAndUpdate(
-        { couponCode: pricing.couponCode },
-        { isRedeemed: true, redeemedAt: new Date(), user: req.user._id }
-      ).exec();
-    }
-  }
-
-  // Update special coupon usage atomically with limit check
-  if (pricing.specialCouponDiscounts && pricing.specialCouponDiscounts.length > 0) {
-    for (const sp of pricing.specialCouponDiscounts) {
-      const updateFilter = { _id: sp.specialCouponId };
-      // Add usage limit condition to prevent over-usage in concurrent requests
-      const promo = await SpecialCoupon.findById(sp.specialCouponId).select("usageLimit").lean();
-      if (promo?.usageLimit) {
-        updateFilter.usageCount = { $lt: promo.usageLimit };
+    // 3. Update regular coupon usage with atomic $lt guard
+    if (pricing.couponCode) {
+      const coupon = await Coupon.findOne({ code: pricing.couponCode })
+        .select("usageLimit")
+        .lean()
+        .session(mongoSession);
+      const couponFilter = { code: pricing.couponCode };
+      if (coupon?.usageLimit) {
+        couponFilter.usageCount = { $lt: coupon.usageLimit };
       }
-      await SpecialCoupon.findOneAndUpdate(updateFilter, {
-        $inc: { usageCount: 1 },
-        $push: { usedBy: { user: req.user._id, usedAt: new Date() } },
-      });
+      const couponResult = await Coupon.findOneAndUpdate(
+        couponFilter,
+        {
+          $inc: { usageCount: 1 },
+          $push: { usedBy: { user: req.user._id, usedAt: new Date() } },
+        },
+        { session: mongoSession }
+      );
+
+      if (!couponResult && coupon?.usageLimit) {
+        throw ApiError.conflict("Coupon usage limit reached. Please remove the coupon and try again.");
+      }
+
+      // Sync spin wheel entry redemption
+      if (pricing.couponCode.startsWith("SPIN-")) {
+        await SpinWheelEntry.findOneAndUpdate(
+          { couponCode: pricing.couponCode },
+          { isRedeemed: true, redeemedAt: new Date(), user: req.user._id },
+          { session: mongoSession }
+        );
+      }
     }
+
+    // 4. Update special coupon usage atomically with limit check
+    if (pricing.specialCouponDiscounts && pricing.specialCouponDiscounts.length > 0) {
+      for (const sp of pricing.specialCouponDiscounts) {
+        const updateFilter = { _id: sp.specialCouponId };
+        const promo = await SpecialCoupon.findById(sp.specialCouponId)
+          .select("usageLimit")
+          .lean()
+          .session(mongoSession);
+        if (promo?.usageLimit) {
+          updateFilter.usageCount = { $lt: promo.usageLimit };
+        }
+        await SpecialCoupon.findOneAndUpdate(
+          updateFilter,
+          {
+            $inc: { usageCount: 1 },
+            $push: { usedBy: { user: req.user._id, usedAt: new Date() } },
+          },
+          { session: mongoSession }
+        );
+      }
+    }
+
+    // 5. Atomic loyalty redemption (pricing engine already validated against
+    //    current config; the atomic decrement guards against race conditions
+    //    where the user spent points elsewhere between pricing calc and now.)
+    if (pricing.loyaltyPointsRedeemed > 0) {
+      const userUpdated = await User.findOneAndUpdate(
+        {
+          _id: req.user._id,
+          loyaltyPoints: { $gte: pricing.loyaltyPointsRedeemed },
+        },
+        { $inc: { loyaltyPoints: -pricing.loyaltyPointsRedeemed } },
+        { session: mongoSession, new: true }
+      );
+
+      if (!userUpdated) {
+        throw ApiError.conflict(
+          "Insufficient loyalty points balance. Please refresh your cart."
+        );
+      }
+
+      await LoyaltyTransaction.create(
+        [
+          {
+            user: req.user._id,
+            type: "redeemed",
+            points: -pricing.loyaltyPointsRedeemed,
+            order: order._id,
+            description: `Redeemed ${pricing.loyaltyPointsRedeemed} points on order ${orderId}`,
+          },
+        ],
+        { session: mongoSession }
+      );
+    }
+
+    // 6. Clear cart
+    await Cart.findOneAndUpdate(
+      { user: req.user._id },
+      { $set: { items: [], giftWrap: false, giftMessage: "" } },
+      { session: mongoSession }
+    );
+
+    await mongoSession.commitTransaction();
+  } catch (err) {
+    await mongoSession.abortTransaction();
+    throw err;
+  } finally {
+    mongoSession.endSession();
   }
 
-  // Clear cart
-  cart.items = [];
-  cart.giftWrap = false;
-  cart.giftMessage = "";
-  await cart.save();
-
-  // Award loyalty points
+  // Non-critical post-transaction: award loyalty points
   await awardPoints(
     req.user._id,
     pricing.loyaltyPoints,
     order._id,
     `Earned ${pricing.loyaltyPoints} points from order ${orderId}`
   );
+
+  // Non-critical: process referral reward (best-effort)
+  try {
+    await processReferralReward(order._id, req.user._id);
+  } catch (err) {
+    console.error("Referral reward error:", err.message);
+  }
 
   res.status(201).json(ApiResponse.created({ order }, "Order placed successfully"));
 });
@@ -262,36 +379,135 @@ const reorder = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ cart }, "Items added to cart"));
 });
 
-/**
- * Enrich specialCouponDiscounts freeItems with product names and prices.
- */
-async function enrichSpecialDiscounts(discounts) {
-  if (!discounts || discounts.length === 0) return [];
+// POST /api/orders/:orderId/cancel
+const cancelOrder = asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
 
-  const enriched = [];
-  for (const sp of discounts) {
-    const enrichedFreeItems = [];
-    if (sp.freeItems && sp.freeItems.length > 0) {
-      for (const fi of sp.freeItems) {
-        const prod = await Product.findById(fi.productId).select("name price").lean();
-        enrichedFreeItems.push({
-          productId: fi.productId,
-          productName: prod?.name || "Gift",
-          quantity: fi.quantity || 1,
-          unitPrice: prod?.price || 0,
-        });
+  const order = await Order.findOne({ orderId, user: req.user._id });
+
+  if (!order) {
+    throw ApiError.notFound("Order not found");
+  }
+
+  const cancellableStatuses = ["pending", "confirmed", "processing"];
+  if (!cancellableStatuses.includes(order.status)) {
+    throw ApiError.badRequest(
+      `Cannot cancel order in "${order.status}" status. Contact support for help.`
+    );
+  }
+
+  order.status = "cancelled";
+
+  // Handle Razorpay refund if payment was captured
+  if (
+    order.payment.method === "razorpay" &&
+    order.payment.status === "paid" &&
+    order.payment.razorpayPaymentId
+  ) {
+    const refund = await razorpayService.issueRefund(
+      order.payment.razorpayPaymentId
+    );
+    order.payment.refunds.push({
+      refundId: refund.id,
+      amount: Math.round(order.pricing.total * 100),
+      reason: "User-initiated cancellation",
+      status: "initiated",
+      initiatedBy: req.user._id,
+    });
+    order.payment.status = "refund_initiated";
+
+    // Save immediately after refund so the record is persisted even if
+    // subsequent reversal operations fail.
+    await order.save();
+  }
+
+  // Reversals are best-effort: if any fails, the order is already saved
+  // with the correct status. Failed reversals can be retried manually.
+  try {
+    // Restore stock for all non-gift items
+    for (const item of order.items) {
+      if (item.isFreeGift) continue;
+      if (!item.selectedSize) continue;
+
+      await Product.findOneAndUpdate(
+        { _id: item.product, "sizes.label": item.selectedSize },
+        { $inc: { "sizes.$.stock": item.quantity } }
+      );
+      await Product.updateOne(
+        { _id: item.product },
+        [{ $set: { totalStock: { $sum: "$sizes.stock" } } }]
+      );
+    }
+
+    // Reverse coupon usage (decrement by 1, remove ONE matching usedBy entry)
+    if (order.pricing.couponCode) {
+      const coupon = await Coupon.findOne({ code: order.pricing.couponCode });
+      if (coupon) {
+        const entryIndex = coupon.usedBy.findIndex(
+          (e) => e.user.toString() === req.user._id.toString()
+        );
+        if (entryIndex !== -1) {
+          coupon.usedBy.splice(entryIndex, 1);
+          coupon.usageCount = Math.max(0, coupon.usageCount - 1);
+          await coupon.save();
+        }
       }
     }
-    enriched.push({
-      specialCouponId: sp.specialCouponId,
-      promotionType: sp.promotionType,
-      title: sp.title,
-      code: sp.code || null,
-      discountAmount: sp.discountAmount,
-      freeItems: enrichedFreeItems,
-    });
-  }
-  return enriched;
-}
 
-module.exports = { placeOrder, getMyOrders, requestReturn, reorder };
+    // Reverse special coupon usage
+    if (order.pricing.specialCouponDiscounts?.length > 0) {
+      for (const sp of order.pricing.specialCouponDiscounts) {
+        const promo = await SpecialCoupon.findById(sp.specialCouponId);
+        if (promo) {
+          const entryIndex = promo.usedBy.findIndex(
+            (e) => e.user.toString() === req.user._id.toString()
+          );
+          if (entryIndex !== -1) {
+            promo.usedBy.splice(entryIndex, 1);
+            promo.usageCount = Math.max(0, promo.usageCount - 1);
+            await promo.save();
+          }
+        }
+      }
+    }
+
+    // Reverse earned loyalty points (subtract what we awarded)
+    if (order.loyaltyPointsEarned > 0) {
+      await reversePoints(
+        req.user._id,
+        order.loyaltyPointsEarned,
+        order._id,
+        `Reversed ${order.loyaltyPointsEarned} points from cancelled order ${order.orderId}`
+      );
+    }
+
+    // Restore redeemed loyalty points (refund them back to user)
+    const redeemed = order.pricing?.loyaltyPointsRedeemed || 0;
+    if (redeemed > 0) {
+      await User.findByIdAndUpdate(req.user._id, {
+        $inc: { loyaltyPoints: redeemed },
+      });
+      await LoyaltyTransaction.create({
+        user: req.user._id,
+        type: "manual_adjustment",
+        points: redeemed,
+        order: order._id,
+        description: `Refunded ${redeemed} redeemed points from cancelled order ${order.orderId}`,
+      });
+    }
+
+    // Reverse referral reward if this was the qualifying order
+    await reverseReferralReward(order._id);
+  } catch (reversalErr) {
+    // Log but don't fail the cancellation. The order is already cancelled
+    // and refund is recorded. Reversals can be handled manually.
+    console.error(`Reversal error for order ${order.orderId}:`, reversalErr.message);
+  }
+
+  // Final save (captures COD cancellation status, or any reversal state changes)
+  await order.save();
+
+  res.json(ApiResponse.ok({ order }, "Order cancelled successfully"));
+});
+
+module.exports = { placeOrder, getMyOrders, requestReturn, reorder, cancelOrder };

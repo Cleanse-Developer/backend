@@ -1,6 +1,11 @@
 const Bundle = require("../models/Bundle");
+const User = require("../models/User");
 const { validateCoupon } = require("./coupon.service");
 const { resolvePromotions } = require("./promotionResolver.service");
+const {
+  getLoyaltyConfig,
+  calculateMaxRedeemable,
+} = require("./loyalty.service");
 const {
   DISCOUNT_TIERS,
   SHIPPING,
@@ -166,7 +171,14 @@ const calculateBundleDiscounts = async (cartItems) => {
  * @param {string|null} specialCouponCode - Special promotion code to apply (optional)
  * @returns {Promise<object>} Pricing breakdown
  */
-const calculatePricing = async (cart, couponCode, userId, giftWrap = false, specialCouponCode = null) => {
+const calculatePricing = async (
+  cart,
+  couponCode,
+  userId,
+  giftWrap = false,
+  specialCouponCode = null,
+  loyaltyPointsToRedeem = 0
+) => {
   // 1. Calculate subtotal
   const subtotal = cart.items.reduce((sum, item) => {
     return sum + item.product.price * item.quantity;
@@ -227,7 +239,8 @@ const calculatePricing = async (cart, couponCode, userId, giftWrap = false, spec
       couponCode,
       userId,
       subtotal, // min order check against original subtotal
-      effectiveSubtotal // actual amount for discount calculation
+      effectiveSubtotal, // actual amount for discount calculation
+      cart.items // cart items for applicableProducts/applicableCategories filtering
     );
     if (couponResult.valid) {
       couponDiscount = couponResult.discount;
@@ -253,21 +266,66 @@ const calculatePricing = async (cart, couponCode, userId, giftWrap = false, spec
   // 7. Gift wrap cost
   const giftWrapCost = giftWrap ? GIFT_WRAP_COST : 0;
 
-  // 8. Cap combined discounts so they never exceed subtotal
-  const totalDiscounts = bundleDiscountTotal + tierDiscount + specialCouponDiscountTotal + couponDiscount;
+  // 8. Loyalty points redemption (after coupon discounts, before shipping)
+  let loyaltyDiscount = 0;
+  let loyaltyPointsRedeemed = 0;
+  let maxRedeemablePoints = 0;
+  let loyaltyConfig = null;
+
+  if (userId) {
+    loyaltyConfig = await getLoyaltyConfig();
+    if (loyaltyConfig.enabled) {
+      const subtotalAfterDiscounts = Math.max(
+        0,
+        subtotal - bundleDiscountTotal - tierDiscount - specialCouponDiscountTotal - couponDiscount
+      );
+
+      const user = await User.findById(userId).select("loyaltyPoints").lean();
+      const userBalance = user?.loyaltyPoints || 0;
+
+      const maxInfo = calculateMaxRedeemable(
+        userBalance,
+        subtotalAfterDiscounts,
+        loyaltyConfig
+      );
+      maxRedeemablePoints = maxInfo.maxPoints;
+
+      // Strict validation: must be a positive integer at/above min and at/below max
+      const requested = Math.floor(Number(loyaltyPointsToRedeem) || 0);
+      if (
+        requested > 0 &&
+        requested >= loyaltyConfig.minRedemptionPoints &&
+        requested <= maxInfo.maxPoints
+      ) {
+        loyaltyPointsRedeemed = requested;
+        // Floor to whole rupees so totals remain integer-safe across the pipeline
+        loyaltyDiscount = Math.floor(
+          loyaltyPointsRedeemed * loyaltyConfig.redeemRatePerPoint
+        );
+        // Never let discount exceed remaining subtotal after other discounts
+        loyaltyDiscount = Math.min(loyaltyDiscount, subtotalAfterDiscounts);
+      }
+    }
+  }
+
+  // 9. Cap combined discounts so they never exceed subtotal
+  const totalDiscounts =
+    bundleDiscountTotal +
+    tierDiscount +
+    specialCouponDiscountTotal +
+    couponDiscount +
+    loyaltyDiscount;
   const cappedDiscounts = Math.min(totalDiscounts, subtotal);
 
-  // 9. Total (never below 0)
+  // 10. Total (never below 0)
   const total = Math.max(
     0,
-    subtotal -
-      cappedDiscounts +
-      effectiveShippingCost +
-      giftWrapCost
+    subtotal - cappedDiscounts + effectiveShippingCost + giftWrapCost
   );
 
-  // 9. Loyalty points (1 point per 10 spent)
-  const loyaltyPoints = Math.floor(total / 10);
+  // 11. Loyalty points earned on this order (uses configured rate against final total)
+  const earnRate = loyaltyConfig?.earnRatePerRupee ?? 0.1;
+  const loyaltyPoints = Math.floor(total * earnRate);
 
   // 10. Tier progress info for the UI progress bar
   const tierProgress = calculateTierProgress(subtotal);
@@ -288,6 +346,9 @@ const calculatePricing = async (cart, couponCode, userId, giftWrap = false, spec
     couponDescription,
     shippingCost: effectiveShippingCost,
     giftWrapCost,
+    loyaltyDiscount,
+    loyaltyPointsRedeemed,
+    maxRedeemablePoints,
     total,
     loyaltyPoints,
     tierProgress,

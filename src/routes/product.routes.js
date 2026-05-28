@@ -9,6 +9,7 @@ const { getProductReviews } = require("../controllers/review.controller");
 const {
   productQueryRules,
   productIdRules,
+  productIdParamRules,
 } = require("../validators/product.validator");
 const validate = require("../middleware/validate");
 
@@ -27,6 +28,6 @@ router.get("/:slug", getProduct);
 router.get("/:id/related", productIdRules, validate, getRelatedProducts);
 
 // GET /api/products/:productId/reviews — public product reviews
-router.get("/:productId/reviews", getProductReviews);
+router.get("/:productId/reviews", productIdParamRules, validate, getProductReviews);
 
 module.exports = router;

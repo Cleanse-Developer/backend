@@ -36,4 +36,10 @@ const productIdRules = [
     .withMessage("Invalid product ID"),
 ];
 
-module.exports = { productQueryRules, productIdRules };
+const productIdParamRules = [
+  param("productId")
+    .isMongoId()
+    .withMessage("Invalid product ID"),
+];
+
+module.exports = { productQueryRules, productIdRules, productIdParamRules };

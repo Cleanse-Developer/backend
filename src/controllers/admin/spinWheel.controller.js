@@ -5,6 +5,7 @@ const asyncHandler = require("../../utils/asyncHandler");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const { paginationMeta } = require("../../utils/pagination");
+const { invalidateSettingsCache } = require("../settings.controller");
 
 // GET /api/admin/spin-wheel/prizes
 const listPrizes = asyncHandler(async (req, res) => {
@@ -22,15 +23,30 @@ const createPrize = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("label, value, and weight are required");
   }
 
+  const numWeight = Number(weight);
+  if (isNaN(numWeight) || numWeight < 0 || numWeight > 100) {
+    throw ApiError.badRequest("Weight must be between 0 and 100");
+  }
+
+  if (discountType && discountType !== "free_shipping") {
+    const dv = Number(discountValue);
+    if (isNaN(dv) || dv < 0) {
+      throw ApiError.badRequest("Discount value must be 0 or greater");
+    }
+    if (discountType === "percentage" && dv > 100) {
+      throw ApiError.badRequest("Percentage discount cannot exceed 100");
+    }
+  }
+
   const existing = await SpinWheelPrize.findOne({ value: value.toLowerCase() });
   if (existing) {
     throw ApiError.conflict(`Prize with value "${value}" already exists`);
   }
 
   const prize = await SpinWheelPrize.create({
-    label,
+    label: String(label).slice(0, 50),
     value: value.toLowerCase(),
-    weight: Number(weight),
+    weight: numWeight,
     discountType: discountType || null,
     discountValue: discountValue ? Number(discountValue) : 0,
     color: color || "#4F2C22",
@@ -48,19 +64,41 @@ const updatePrize = asyncHandler(async (req, res) => {
     throw ApiError.notFound("Prize not found");
   }
 
-  const allowedFields = ["label", "value", "weight", "discountType", "discountValue", "color", "textColor", "isActive"];
-  for (const field of allowedFields) {
-    if (req.body[field] !== undefined) {
-      prize[field] = req.body[field];
+  // Validate before applying
+  if (req.body.weight !== undefined) {
+    const w = Number(req.body.weight);
+    if (isNaN(w) || w < 0 || w > 100) {
+      throw ApiError.badRequest("Weight must be between 0 and 100");
+    }
+    prize.weight = w;
+  }
+
+  const dt = req.body.discountType !== undefined ? req.body.discountType : prize.discountType;
+  if (req.body.discountValue !== undefined && dt && dt !== "free_shipping") {
+    const dv = Number(req.body.discountValue);
+    if (isNaN(dv) || dv < 0) {
+      throw ApiError.badRequest("Discount value must be 0 or greater");
+    }
+    if (dt === "percentage" && dv > 100) {
+      throw ApiError.badRequest("Percentage discount cannot exceed 100");
     }
   }
 
+  if (req.body.label !== undefined) prize.label = String(req.body.label).slice(0, 50);
+  if (req.body.discountType !== undefined) prize.discountType = req.body.discountType;
+  if (req.body.discountValue !== undefined) prize.discountValue = Number(req.body.discountValue);
+  if (req.body.color !== undefined) prize.color = req.body.color;
+  if (req.body.textColor !== undefined) prize.textColor = req.body.textColor;
+  if (req.body.isActive !== undefined) prize.isActive = req.body.isActive;
+
   // If value is being changed, check for duplicates
-  if (req.body.value && req.body.value !== prize.value) {
-    const existing = await SpinWheelPrize.findOne({ value: req.body.value, _id: { $ne: prize._id } });
+  if (req.body.value !== undefined && req.body.value !== prize.value) {
+    const cleanValue = String(req.body.value).toLowerCase().trim();
+    const existing = await SpinWheelPrize.findOne({ value: cleanValue, _id: { $ne: prize._id } });
     if (existing) {
-      throw ApiError.conflict(`Prize with value "${req.body.value}" already exists`);
+      throw ApiError.conflict(`Prize with value "${cleanValue}" already exists`);
     }
+    prize.value = cleanValue;
   }
 
   await prize.save();
@@ -120,6 +158,8 @@ const toggleSpinWheel = asyncHandler(async (req, res) => {
     { key: "spinWheelEnabled", value: enabled },
     { upsert: true }
   );
+
+  invalidateSettingsCache();
 
   res.json(ApiResponse.ok({ enabled }, `Spin wheel ${enabled ? "enabled" : "disabled"}`));
 });

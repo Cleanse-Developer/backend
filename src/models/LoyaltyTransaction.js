@@ -9,7 +9,14 @@ const loyaltyTransactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["earned", "redeemed", "expired", "referral_bonus"],
+      enum: [
+        "earned",
+        "redeemed",
+        "expired",
+        "referral_bonus",
+        "reversed",
+        "manual_adjustment",
+      ],
       required: true,
     },
     points: { type: Number, required: true },

@@ -20,6 +20,7 @@ const referralSchema = new mongoose.Schema(
       ref: "Order",
     },
     rewardedAt: { type: Date },
+    rewardReversedAt: { type: Date },
   },
   { timestamps: true }
 );

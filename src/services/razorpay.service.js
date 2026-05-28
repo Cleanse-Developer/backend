@@ -51,4 +51,14 @@ const issueRefund = async (paymentId, amount) => {
   return refund;
 };
 
-module.exports = { createOrder, verifyPayment, issueRefund };
+/**
+ * Fetch a Razorpay order by ID.
+ * @param {string} razorpayOrderId - Razorpay order ID
+ * @returns {Promise<object>} Razorpay order object
+ */
+const fetchOrder = async (razorpayOrderId) => {
+  const razorpay = getRazorpay();
+  return razorpay.orders.fetch(razorpayOrderId);
+};
+
+module.exports = { createOrder, verifyPayment, issueRefund, fetchOrder };
