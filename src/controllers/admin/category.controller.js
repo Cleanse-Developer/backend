@@ -3,6 +3,21 @@ const Product = require("../../models/Product");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
+const { uploadToCloudinary } = require("../../services/upload.service");
+
+// Resolve a banner field: a newly uploaded file wins, otherwise fall back to
+// the string sent in the body (existing URL to keep, or "" to clear).
+async function resolveBanner(req, field) {
+  const file = req.files?.[field]?.[0];
+  if (file) {
+    const uploaded = await uploadToCloudinary(file.buffer, "categories");
+    return uploaded.url;
+  }
+  if (typeof req.body[field] === "string") {
+    return req.body[field];
+  }
+  return undefined;
+}
 
 // GET /api/admin/categories
 const listCategories = asyncHandler(async (req, res) => {
@@ -33,7 +48,7 @@ const listCategories = asyncHandler(async (req, res) => {
 
 // POST /api/admin/categories
 const createCategory = asyncHandler(async (req, res) => {
-  const { name, description, image, parent, sortOrder } = req.body;
+  const { name, description, parent, sortOrder } = req.body;
 
   if (!name) {
     throw ApiError.badRequest("Category name is required");
@@ -51,13 +66,17 @@ const createCategory = asyncHandler(async (req, res) => {
     throw ApiError.conflict("A category with this name already exists");
   }
 
+  const bannerTop = await resolveBanner(req, "bannerTop");
+  const bannerBottom = await resolveBanner(req, "bannerBottom");
+
   const category = await Category.create({
     name,
     slug,
     description,
-    image,
+    bannerTop,
+    bannerBottom,
     parent: parent || null,
-    sortOrder: sortOrder || 0,
+    sortOrder: Number(sortOrder) || 0,
   });
 
   res.status(201).json(ApiResponse.created(category, "Category created"));
@@ -70,7 +89,7 @@ const updateCategory = asyncHandler(async (req, res) => {
     throw ApiError.notFound("Category not found");
   }
 
-  const { name, description, image, parent, sortOrder, isActive } = req.body;
+  const { name, description, parent, sortOrder, isActive } = req.body;
 
   if (name && name !== category.name) {
     const slug = name
@@ -89,11 +108,15 @@ const updateCategory = asyncHandler(async (req, res) => {
     category.slug = slug;
   }
 
+  const bannerTop = await resolveBanner(req, "bannerTop");
+  const bannerBottom = await resolveBanner(req, "bannerBottom");
+
   if (description !== undefined) category.description = description;
-  if (image !== undefined) category.image = image;
+  if (bannerTop !== undefined) category.bannerTop = bannerTop;
+  if (bannerBottom !== undefined) category.bannerBottom = bannerBottom;
   if (parent !== undefined) category.parent = parent || null;
-  if (sortOrder !== undefined) category.sortOrder = sortOrder;
-  if (isActive !== undefined) category.isActive = isActive;
+  if (sortOrder !== undefined) category.sortOrder = Number(sortOrder) || 0;
+  if (isActive !== undefined) category.isActive = isActive === true || isActive === "true";
 
   await category.save();
 
