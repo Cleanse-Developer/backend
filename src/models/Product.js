@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const responsiveSources = require("./shared/responsiveSources");
 
 const productSchema = new mongoose.Schema(
   {
@@ -31,6 +32,7 @@ const productSchema = new mongoose.Schema(
         url: { type: String },
         alt: { type: String },
         isPrimary: { type: Boolean, default: false },
+        sources: responsiveSources,
       },
     ],
     ingredients: { type: String },
@@ -49,6 +51,8 @@ const productSchema = new mongoose.Schema(
     reviewCount: { type: Number, default: 0 },
     totalStock: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+    isDeleted: { type: Boolean, default: false, index: true },
+    deletedAt: { type: Date, default: null },
     isFeatured: { type: Boolean, default: false },
     isBundleable: { type: Boolean, default: false },
     seo: {

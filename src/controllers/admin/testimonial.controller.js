@@ -4,6 +4,11 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
 const { paginationMeta } = require("../../utils/pagination");
+const { buildSourcesFromFields } = require("../../utils/imageVariants");
+
+const TESTIMONIAL_IMAGE_FOLDER = "cleanse-ayurveda/testimonials";
+
+const parseSources = (val) => (typeof val === "string" ? JSON.parse(val) : val);
 
 // GET /api/admin/testimonials/:id
 const getTestimonial = asyncHandler(async (req, res) => {
@@ -78,7 +83,7 @@ const createTestimonial = asyncHandler(async (req, res) => {
   if (req.files && req.files.beforeImage) {
     const uploaded = await uploadToCloudinary(
       req.files.beforeImage[0].buffer,
-      "cleanse-ayurveda/testimonials"
+      TESTIMONIAL_IMAGE_FOLDER
     );
     data.beforeImage = uploaded.url;
   } else if (beforeImage) {
@@ -88,12 +93,26 @@ const createTestimonial = asyncHandler(async (req, res) => {
   if (req.files && req.files.afterImage) {
     const uploaded = await uploadToCloudinary(
       req.files.afterImage[0].buffer,
-      "cleanse-ayurveda/testimonials"
+      TESTIMONIAL_IMAGE_FOLDER
     );
     data.afterImage = uploaded.url;
   } else if (afterImage) {
     data.afterImage = afterImage;
   }
+
+  // Responsive image variants (optional, per breakpoint) for before/after
+  data.beforeImageSources = await buildSourcesFromFields(
+    req.files,
+    "beforeImage",
+    parseSources(req.body.beforeImageSources),
+    TESTIMONIAL_IMAGE_FOLDER
+  );
+  data.afterImageSources = await buildSourcesFromFields(
+    req.files,
+    "afterImage",
+    parseSources(req.body.afterImageSources),
+    TESTIMONIAL_IMAGE_FOLDER
+  );
 
   const testimonial = await Testimonial.create(data);
 
@@ -127,7 +146,7 @@ const updateTestimonial = asyncHandler(async (req, res) => {
   if (req.files && req.files.beforeImage) {
     const uploaded = await uploadToCloudinary(
       req.files.beforeImage[0].buffer,
-      "cleanse-ayurveda/testimonials"
+      TESTIMONIAL_IMAGE_FOLDER
     );
     updateData.beforeImage = uploaded.url;
   }
@@ -136,11 +155,38 @@ const updateTestimonial = asyncHandler(async (req, res) => {
   if (req.files && req.files.afterImage) {
     const uploaded = await uploadToCloudinary(
       req.files.afterImage[0].buffer,
-      "cleanse-ayurveda/testimonials"
+      TESTIMONIAL_IMAGE_FOLDER
     );
     updateData.afterImage = uploaded.url;
   }
   // If no file uploaded for afterImage, body URL (if any) is already in updateData
+
+  // Responsive image variants — recompute per side when form sends them or a file lands
+  const beforeVariantFile =
+    req.files?.beforeImageDesktop ||
+    req.files?.beforeImageTablet ||
+    req.files?.beforeImageMobile;
+  if (updateData.beforeImageSources !== undefined || beforeVariantFile) {
+    updateData.beforeImageSources = await buildSourcesFromFields(
+      req.files,
+      "beforeImage",
+      parseSources(updateData.beforeImageSources),
+      TESTIMONIAL_IMAGE_FOLDER
+    );
+  }
+
+  const afterVariantFile =
+    req.files?.afterImageDesktop ||
+    req.files?.afterImageTablet ||
+    req.files?.afterImageMobile;
+  if (updateData.afterImageSources !== undefined || afterVariantFile) {
+    updateData.afterImageSources = await buildSourcesFromFields(
+      req.files,
+      "afterImage",
+      parseSources(updateData.afterImageSources),
+      TESTIMONIAL_IMAGE_FOLDER
+    );
+  }
 
   Object.assign(testimonial, updateData);
   await testimonial.save();

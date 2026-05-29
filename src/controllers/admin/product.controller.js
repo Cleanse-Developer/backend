@@ -4,6 +4,44 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
 const { paginationMeta } = require("../../utils/pagination");
+const {
+  resolveProductImages,
+  filesByFieldName,
+} = require("../../utils/imageVariants");
+
+const PRODUCT_IMAGE_FOLDER = "cleanse-ayurveda/products";
+
+// Resolve the `images` metadata array (+ keyed variant files from upload.any())
+// into the stored images[] shape. Legacy fallback: bare files with no metadata
+// become base images appended to any existing ones.
+async function applyProductImages(data, req, existingImages = []) {
+  const fileMap = filesByFieldName(req.files);
+
+  let metadata;
+  if (typeof data.images === "string") metadata = JSON.parse(data.images);
+  else if (Array.isArray(data.images)) metadata = data.images;
+
+  if (Array.isArray(metadata)) {
+    data.images = await resolveProductImages(metadata, fileMap, PRODUCT_IMAGE_FOLDER);
+    return;
+  }
+
+  const files = req.files || [];
+  if (files.length > 0) {
+    const uploads = await Promise.all(
+      files.map((f) => uploadToCloudinary(f.buffer, PRODUCT_IMAGE_FOLDER))
+    );
+    const base = existingImages.length ? [...existingImages] : [];
+    const newImages = uploads.map((img, i) => ({
+      url: img.url,
+      alt: data.name || "Product image",
+      isPrimary: base.length === 0 && i === 0,
+    }));
+    data.images = [...base, ...newImages];
+  } else {
+    delete data.images;
+  }
+}
 
 // GET /api/admin/products
 const listProducts = asyncHandler(async (req, res) => {
@@ -34,6 +72,12 @@ const listProducts = asyncHandler(async (req, res) => {
     filter.isActive = false;
   }
 
+  if (req.query.deleted === "true") {
+    filter.isDeleted = true;
+  } else {
+    filter.isDeleted = { $ne: true };
+  }
+
   const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
 
   const [products, total] = await Promise.all([
@@ -58,20 +102,8 @@ const listProducts = asyncHandler(async (req, res) => {
 const createProduct = asyncHandler(async (req, res) => {
   const productData = req.body;
 
-  // Handle image uploads
-  if (req.files && req.files.length > 0) {
-    const imageUploads = await Promise.all(
-      req.files.map((file) =>
-        uploadToCloudinary(file.buffer, "cleanse-ayurveda/products")
-      )
-    );
-
-    productData.images = imageUploads.map((img, index) => ({
-      url: img.url,
-      alt: productData.name || "Product image",
-      isPrimary: index === 0,
-    }));
-  }
+  // Resolve images metadata + variant files
+  await applyProductImages(productData, req);
 
   // Parse sizes if sent as JSON string
   if (typeof productData.sizes === "string") {
@@ -115,31 +147,8 @@ const updateProduct = asyncHandler(async (req, res) => {
 
   const updateData = req.body;
 
-  // Parse images if sent as JSON string (for removing/reordering existing images)
-  if (typeof updateData.images === "string") {
-    updateData.images = JSON.parse(updateData.images);
-  }
-
-  // Handle new image uploads
-  if (req.files && req.files.length > 0) {
-    const imageUploads = await Promise.all(
-      req.files.map((file) =>
-        uploadToCloudinary(file.buffer, "cleanse-ayurveda/products")
-      )
-    );
-
-    const newImages = imageUploads.map((img) => ({
-      url: img.url,
-      alt: updateData.name || product.name || "Product image",
-      isPrimary: false,
-    }));
-
-    // Use parsed images array as base if provided, otherwise use existing
-    const baseImages = Array.isArray(updateData.images)
-      ? updateData.images
-      : [...(product.images || [])];
-    updateData.images = [...baseImages, ...newImages];
-  }
+  // Resolve images metadata + variant files (legacy fallback appends to existing)
+  await applyProductImages(updateData, req, product.images || []);
 
   // Parse sizes if sent as JSON string
   if (typeof updateData.sizes === "string") {
@@ -169,10 +178,25 @@ const deleteProduct = asyncHandler(async (req, res) => {
     throw ApiError.notFound("Product not found");
   }
 
-  product.isActive = false;
+  product.isDeleted = true;
+  product.deletedAt = new Date();
   await product.save();
 
   res.json(ApiResponse.ok(null, "Product deleted"));
+});
+
+// PATCH /api/admin/products/:id/restore
+const restoreProduct = asyncHandler(async (req, res) => {
+  const product = await Product.findById(req.params.id);
+  if (!product) {
+    throw ApiError.notFound("Product not found");
+  }
+
+  product.isDeleted = false;
+  product.deletedAt = null;
+  await product.save();
+
+  res.json(ApiResponse.ok(null, "Product restored"));
 });
 
 module.exports = {
@@ -181,4 +205,5 @@ module.exports = {
   getProduct,
   updateProduct,
   deleteProduct,
+  restoreProduct,
 };

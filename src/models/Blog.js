@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const responsiveSources = require("./shared/responsiveSources");
 
 const blogSchema = new mongoose.Schema(
   {
@@ -13,6 +14,7 @@ const blogSchema = new mongoose.Schema(
     excerpt: { type: String, maxlength: 500 },
     content: [{ type: String }],
     image: { type: String },
+    imageSources: responsiveSources,
     readTime: { type: String },
     author: {
       type: mongoose.Schema.Types.ObjectId,

@@ -27,8 +27,15 @@ router.get(
 
 router.get("/", listBlogs);
 router.get("/:id", getBlog);
-router.post("/", upload.single("image"), createBlog);
-router.patch("/:id", upload.single("image"), updateBlog);
+const blogImageFields = upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "imageDesktop", maxCount: 1 },
+  { name: "imageTablet", maxCount: 1 },
+  { name: "imageMobile", maxCount: 1 },
+]);
+
+router.post("/", blogImageFields, createBlog);
+router.patch("/:id", blogImageFields, updateBlog);
 router.delete("/:id", deleteBlog);
 
 module.exports = router;

@@ -5,6 +5,11 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
 const { paginationMeta } = require("../../utils/pagination");
+const { buildSourcesFromFields } = require("../../utils/imageVariants");
+
+const BLOG_IMAGE_FOLDER = "cleanse-ayurveda/blogs";
+
+const parseSources = (val) => (typeof val === "string" ? JSON.parse(val) : val);
 
 // GET /api/admin/blogs
 const listBlogs = asyncHandler(async (req, res) => {
@@ -103,16 +108,25 @@ const createBlog = asyncHandler(async (req, res) => {
     seo: typeof seo === "string" ? JSON.parse(seo) : seo,
   };
 
-  // Handle image upload if file present
-  if (req.file) {
+  // Handle base image upload if file present
+  const baseImageFile = req.files?.image?.[0];
+  if (baseImageFile) {
     const uploaded = await uploadToCloudinary(
-      req.file.buffer,
-      "cleanse-ayurveda/blogs"
+      baseImageFile.buffer,
+      BLOG_IMAGE_FOLDER
     );
     blogData.image = uploaded.url;
   } else if (image) {
     blogData.image = image;
   }
+
+  // Responsive image variants (optional, per breakpoint)
+  blogData.imageSources = await buildSourcesFromFields(
+    req.files,
+    "image",
+    parseSources(req.body.imageSources),
+    BLOG_IMAGE_FOLDER
+  );
 
   // Set author
   if (authorId) {
@@ -142,13 +156,26 @@ const updateBlog = asyncHandler(async (req, res) => {
 
   const updateData = { ...req.body };
 
-  // Handle image upload
-  if (req.file) {
+  // Handle base image upload
+  const baseImageFile = req.files?.image?.[0];
+  if (baseImageFile) {
     const uploaded = await uploadToCloudinary(
-      req.file.buffer,
-      "cleanse-ayurveda/blogs"
+      baseImageFile.buffer,
+      BLOG_IMAGE_FOLDER
     );
     updateData.image = uploaded.url;
+  }
+
+  // Responsive image variants — recompute whenever the form sends them or a file lands
+  const hasVariantFile =
+    req.files?.imageDesktop || req.files?.imageTablet || req.files?.imageMobile;
+  if (updateData.imageSources !== undefined || hasVariantFile) {
+    updateData.imageSources = await buildSourcesFromFields(
+      req.files,
+      "image",
+      parseSources(updateData.imageSources),
+      BLOG_IMAGE_FOLDER
+    );
   }
 
   // Parse JSON strings if needed

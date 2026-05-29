@@ -1,5 +1,5 @@
 const { Router } = require("express");
-const { auth } = require("../middleware/auth");
+const { auth, optionalAuth } = require("../middleware/auth");
 const { authLimiter, adminLimiter } = require("../middleware/rateLimiter");
 const roleGuard = require("../middleware/roleGuard");
 
@@ -33,8 +33,8 @@ router.use("/user", auth, require("./user.routes"));
 router.use("/addresses", auth, require("./address.routes"));
 router.use("/wishlist", auth, require("./wishlist.routes"));
 router.use("/reviews", auth, require("./review.routes"));
-router.use("/coupons", auth, require("./coupon.routes"));
-router.use("/special-coupons", auth, require("./specialCoupon.routes"));
+router.use("/coupons", optionalAuth, require("./coupon.routes"));
+router.use("/special-coupons", optionalAuth, require("./specialCoupon.routes"));
 router.use("/payments", auth, require("./payment.routes"));
 router.use("/referral", auth, require("./referral.routes"));
 router.use("/loyalty", auth, require("./loyalty.routes"));

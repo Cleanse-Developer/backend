@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const responsiveSources = require("./shared/responsiveSources");
 
 const testimonialSchema = new mongoose.Schema(
   {
@@ -8,6 +9,8 @@ const testimonialSchema = new mongoose.Schema(
     text: { type: String, required: true },
     beforeImage: { type: String },
     afterImage: { type: String },
+    beforeImageSources: responsiveSources,
+    afterImageSources: responsiveSources,
     // "review" = only text/rating, "before-after" = only before/after images, "both" = both
     type: {
       type: String,

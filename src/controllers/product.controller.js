@@ -16,7 +16,7 @@ const listProducts = asyncHandler(async (req, res) => {
     bundleable,
   } = req.query;
 
-  const filter = { isActive: true };
+  const filter = { isActive: true, isDeleted: { $ne: true } };
 
   // Tag filter
   if (tag) {
@@ -82,6 +82,7 @@ const listProducts = asyncHandler(async (req, res) => {
       .sort(sortOption)
       .skip(skip)
       .limit(limitNum)
+      .populate("category", "name slug")
       .select("-__v"),
     Product.countDocuments(filter),
   ]);
@@ -99,6 +100,7 @@ const getProduct = asyncHandler(async (req, res) => {
   const product = await Product.findOne({
     slug: req.params.slug,
     isActive: true,
+    isDeleted: { $ne: true },
   })
     .populate("category", "name slug")
     .select("-__v");
@@ -130,6 +132,7 @@ const getRelatedProducts = asyncHandler(async (req, res) => {
       $match: {
         _id: { $ne: product._id },
         isActive: true,
+        isDeleted: { $ne: true },
         $or: matchConditions,
       },
     },
@@ -154,6 +157,7 @@ const searchProducts = asyncHandler(async (req, res) => {
 
   const filter = {
     isActive: true,
+    isDeleted: { $ne: true },
     $text: { $search: q },
   };
 

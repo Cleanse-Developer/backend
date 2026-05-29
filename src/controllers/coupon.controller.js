@@ -17,16 +17,22 @@ const validateCoupon = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Valid cart subtotal is required");
   }
 
-  // Load user's cart with populated products for applicableProducts/applicableCategories filtering
-  const cart = await Cart.findOne({ user: req.user._id }).populate({
-    path: "items.product",
-    select: "_id price category",
-  });
-  const cartItems = cart?.items || [];
+  // Guests have no server-side cart; load it only for authenticated users.
+  const userId = req.user?._id || null;
+
+  let cartItems = [];
+  if (userId) {
+    // Load user's cart with populated products for applicableProducts/applicableCategories filtering
+    const cart = await Cart.findOne({ user: userId }).populate({
+      path: "items.product",
+      select: "_id price category",
+    });
+    cartItems = cart?.items || [];
+  }
 
   const result = await validateCouponService(
     code,
-    req.user._id,
+    userId,
     cartSubtotal,
     undefined, // effectiveSubtotal not available at preview time
     cartItems
