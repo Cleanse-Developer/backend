@@ -1,11 +1,13 @@
 const stripSlash = (url) => (url || "").replace(/\/+$/, "");
 
-// TEMP: CORS disabled — reflect any origin. Re-enable allowlist before going live.
+// TEMP: CORS fully open — reflect any origin, method, and header.
+// `*` can't be combined with credentials, so reflection is the allow-all form.
+// Re-enable the allowlist below before going live.
 const corsOptions = {
-  origin: true,
+  origin: true, // reflect request origin (any)
   credentials: true,
-  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+  // allowedHeaders omitted -> cors reflects Access-Control-Request-Headers (any)
 };
 
 // --- Original allowlist (restore this) ---
