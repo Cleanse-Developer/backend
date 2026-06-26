@@ -23,7 +23,16 @@ const PORT = process.env.PORT || 5000;
 // Middleware stack
 app.use(helmet());
 app.use(cors(corsOptions));
-app.use(express.json({ limit: "10mb" }));
+app.use(
+  express.json({
+    limit: "10mb",
+    // Preserve the exact raw request bytes for HMAC signature verification
+    // (Razorpay webhooks must be validated against the raw body, not re-serialized JSON).
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(mongoSanitize());

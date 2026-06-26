@@ -1,6 +1,9 @@
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const Cart = require("../models/Cart");
 const Order = require("../models/Order");
+const PaymentSession = require("../models/PaymentSession");
+const WebhookEvent = require("../models/WebhookEvent");
 const Coupon = require("../models/Coupon");
 const SpecialCoupon = require("../models/SpecialCoupon");
 const Product = require("../models/Product");
@@ -14,7 +17,12 @@ const { awardPoints, redeemPoints } = require("../services/loyalty.service");
 const { processReferralReward } = require("../services/referral.service");
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
-const { enrichSpecialDiscounts } = require("../services/checkout.service");
+const {
+  enrichSpecialDiscounts,
+  createOrderFromSession,
+  postOrderActions,
+} = require("../services/checkout.service");
+const { releaseStock } = require("../services/stock.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
 
@@ -328,236 +336,332 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
 
 // POST /api/payments/webhook
 // Session-aware, idempotent webhook handler.
-// Handles: payment.captured, order.paid, payment.failed, refund.processed
+//
+// Flow: verify signature over the RAW body -> dedup on x-razorpay-event-id ->
+// dispatch -> record event id on success. Handlers complete normally on success
+// or permanent no-op; they THROW on transient failures so this wrapper responds
+// 5xx and Razorpay retries (the dedup record is only written after success, so a
+// retry reprocesses cleanly).
+//
+// Handles: payment.captured, order.paid, payment.authorized, payment.failed,
+//          refund.created, refund.processed, refund.failed
 const handleWebhook = async (req, res) => {
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  const signature = req.headers["x-razorpay-signature"];
+
+  // 1. Signature must be present and the raw body captured (server.js verify hook)
+  if (!signature || !webhookSecret || !req.rawBody) {
+    return res.status(400).json({ error: "Missing signature or secret" });
+  }
+
+  // 2. Verify signature over the RAW request bytes (never re-serialized JSON),
+  //    using a constant-time comparison.
+  let validSignature = false;
   try {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
-    const signature = req.headers["x-razorpay-signature"];
-
-    if (!signature || !webhookSecret) {
-      return res.status(400).json({ error: "Missing signature or secret" });
-    }
-
-    // Verify webhook signature
-    const expectedSignature = crypto
+    const expected = crypto
       .createHmac("sha256", webhookSecret)
-      .update(JSON.stringify(req.body))
+      .update(req.rawBody)
       .digest("hex");
+    const expectedBuf = Buffer.from(expected, "utf8");
+    const signatureBuf = Buffer.from(signature, "utf8");
+    validSignature =
+      expectedBuf.length === signatureBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, signatureBuf);
+  } catch {
+    validSignature = false;
+  }
 
-    if (expectedSignature !== signature) {
-      return res.status(400).json({ error: "Invalid signature" });
+  if (!validSignature) {
+    return res.status(400).json({ error: "Invalid signature" });
+  }
+
+  const event = req.body.event;
+  const payload = req.body.payload;
+  const eventId = req.headers["x-razorpay-event-id"];
+
+  console.log(
+    `[Webhook] Event: ${event}, EventId: ${eventId || "none"}, OrderId: ${
+      payload?.payment?.entity?.order_id ||
+      payload?.refund?.entity?.payment_id ||
+      "unknown"
+    }`
+  );
+
+  // 3. Idempotency: skip events we have already fully processed (Razorpay
+  //    retries and may deliver duplicates).
+  if (eventId) {
+    const seen = await WebhookEvent.exists({ eventId });
+    if (seen) {
+      return res.status(200).json({ status: "ok", duplicate: true });
     }
+  }
 
-    const event = req.body.event;
-    const payload = req.body.payload;
+  // 4. Dispatch. Throws => transient failure => 5xx so Razorpay retries.
+  try {
+    await processWebhookEvent(event, payload);
+  } catch (err) {
+    console.error(`Webhook processing error (${event}):`, err.message);
+    return res.status(500).json({ error: "Processing failed" });
+  }
 
-    // Log every webhook payload for debugging
-    console.log(
-      `[Webhook] Event: ${event}, OrderId: ${payload?.payment?.entity?.order_id || payload?.refund?.entity?.payment_id || "unknown"}`
-    );
-
-    // --- payment.captured / order.paid ---
-    if (event === "payment.captured" || event === "order.paid") {
-      const razorpayPaymentId = payload.payment.entity.id;
-      const razorpayOrderId = payload.payment.entity.order_id;
-
-      const PaymentSession = require("../models/PaymentSession");
-      const session = await PaymentSession.findOne({ razorpayOrderId });
-
-      if (!session) {
-        // Legacy order or test event -- try old behavior as fallback
-        await Order.findOneAndUpdate(
-          { "payment.razorpayOrderId": razorpayOrderId },
-          {
-            "payment.razorpayPaymentId": razorpayPaymentId,
-            "payment.status": "paid",
-            status: "confirmed",
-          }
-        );
-        return res.status(200).json({ status: "ok" });
+  // 5. Record the event id so future deliveries short-circuit (step 3).
+  //    Tolerate the race where a concurrent delivery inserted it first.
+  if (eventId) {
+    try {
+      await WebhookEvent.create({ eventId, event });
+    } catch (err) {
+      if (err.code !== 11000) {
+        console.error("Webhook dedup record error:", err.message);
       }
+    }
+  }
 
-      if (session.status === "completed") {
-        // Order already created -- ensure payment status is correct
-        await Order.findOneAndUpdate(
-          { paymentSession: session._id },
-          {
-            "payment.razorpayPaymentId": razorpayPaymentId,
-            "payment.status": "paid",
-          }
-        );
-        return res.status(200).json({ status: "ok" });
-      }
+  return res.status(200).json({ status: "ok" });
+};
 
-      if (session.status === "processing") {
-        // Another handler (confirm endpoint) is already creating the order
-        return res.status(200).json({ status: "ok" });
-      }
+/**
+ * Dispatch a verified, de-duplicated webhook event.
+ * Returns on success or permanent no-op; throws on transient failures
+ * (so the caller responds 5xx and Razorpay retries).
+ */
+const processWebhookEvent = async (event, payload) => {
+  // --- payment.captured / order.paid ---
+  // (order.paid payload also carries payload.payment.entity)
+  if (event === "payment.captured" || event === "order.paid") {
+    const razorpayPaymentId = payload.payment.entity.id;
+    const razorpayOrderId = payload.payment.entity.order_id;
 
-      if (session.status === "pending") {
-        // Client confirm either failed or hasn't arrived. Create the order.
-        const locked = await PaymentSession.findOneAndUpdate(
-          { _id: session._id, status: "pending" },
-          { $set: { status: "processing" } },
-          { new: true }
-        );
+    const session = await PaymentSession.findOne({ razorpayOrderId });
 
-        if (!locked) {
-          return res.status(200).json({ status: "ok" });
+    if (!session) {
+      // Legacy order or test event -- fallback to direct order update
+      await Order.findOneAndUpdate(
+        { "payment.razorpayOrderId": razorpayOrderId },
+        {
+          "payment.razorpayPaymentId": razorpayPaymentId,
+          "payment.status": "paid",
+          status: "confirmed",
         }
-
-        const mongoose = require("mongoose");
-        const {
-          createOrderFromSession,
-          postOrderActions,
-        } = require("../services/checkout.service");
-        const razorpayService = require("../services/razorpay.service");
-
-        // Verify amount
-        try {
-          const rzpOrder = await razorpayService.fetchOrder(razorpayOrderId);
-          if (rzpOrder.amount !== locked.amountInPaise) {
-            console.error(
-              `Webhook amount mismatch: Razorpay=${rzpOrder.amount}, Session=${locked.amountInPaise}`
-            );
-            await PaymentSession.findByIdAndUpdate(locked._id, {
-              status: "pending",
-            });
-            return res.status(200).json({ status: "ok" });
-          }
-        } catch (err) {
-          console.error("Webhook: Failed to fetch Razorpay order:", err.message);
-          await PaymentSession.findByIdAndUpdate(locked._id, {
-            status: "pending",
-          });
-          return res.status(200).json({ status: "ok" });
-        }
-
-        const mongoSession = await mongoose.startSession();
-        try {
-          mongoSession.startTransaction();
-          const order = await createOrderFromSession(
-            locked,
-            {
-              method: "razorpay",
-              razorpayOrderId,
-              razorpayPaymentId,
-            },
-            mongoSession
-          );
-          await mongoSession.commitTransaction();
-          await postOrderActions(order, locked);
-        } catch (err) {
-          await mongoSession.abortTransaction();
-          await PaymentSession.findByIdAndUpdate(locked._id, {
-            status: "pending",
-          });
-          console.error("Webhook: Order creation failed:", err.message);
-        } finally {
-          mongoSession.endSession();
-        }
-
-        return res.status(200).json({ status: "ok" });
-      }
-
-      // expired or failed session -- log for investigation
-      console.error(
-        `Webhook: payment.captured for session in status "${session.status}" (session: ${session._id})`
       );
-      return res.status(200).json({ status: "ok" });
+      return;
     }
 
-    // --- payment.failed ---
-    if (event === "payment.failed") {
-      const razorpayOrderId = payload.payment.entity.order_id;
+    if (session.status === "completed") {
+      // Order already created -- ensure payment fields are correct
+      await Order.findOneAndUpdate(
+        { paymentSession: session._id },
+        {
+          "payment.razorpayPaymentId": razorpayPaymentId,
+          "payment.status": "paid",
+        }
+      );
+      return;
+    }
 
-      const PaymentSession = require("../models/PaymentSession");
-      const { releaseStock } = require("../services/stock.service");
+    if (session.status === "processing") {
+      // The confirm endpoint is already creating the order
+      return;
+    }
 
-      // Atomic transition: only process if still pending
-      const session = await PaymentSession.findOneAndUpdate(
-        { razorpayOrderId, status: "pending" },
-        { $set: { status: "failed" } },
+    if (session.status === "pending") {
+      // Client confirm either failed or hasn't arrived. Create the order.
+      const locked = await PaymentSession.findOneAndUpdate(
+        { _id: session._id, status: "pending" },
+        { $set: { status: "processing" } },
         { new: true }
       );
 
-      if (!session) {
-        // No session or already handled -- fallback for legacy orders
-        const existingSession = await PaymentSession.findOne({ razorpayOrderId });
-        if (!existingSession) {
-          await Order.findOneAndUpdate(
-            { "payment.razorpayOrderId": razorpayOrderId },
-            { "payment.status": "failed", status: "cancelled" }
-          );
-        }
-        return res.status(200).json({ status: "ok" });
+      if (!locked) return;
+
+      // Verify the captured amount matches the frozen session amount.
+      let rzpOrder;
+      try {
+        rzpOrder = await razorpayService.fetchOrder(razorpayOrderId);
+      } catch (err) {
+        // Transient: revert and let Razorpay retry.
+        await PaymentSession.findByIdAndUpdate(locked._id, { status: "pending" });
+        throw new Error(`fetchOrder failed: ${err.message}`);
       }
 
-      // Release reserved stock
-      await releaseStock(session.stockReservations);
-
-      // Cancel Agenda job
-      if (session.agendaJobId) {
-        try {
-          const agenda = require("../config/agenda");
-          const mongoose = require("mongoose");
-          await agenda.cancel({
-            _id: new mongoose.Types.ObjectId(session.agendaJobId),
-          });
-        } catch {
-          // Non-critical
-        }
+      if (rzpOrder.amount !== locked.amountInPaise) {
+        // Permanent mismatch: do not create the order, revert, acknowledge.
+        console.error(
+          `Webhook amount mismatch: Razorpay=${rzpOrder.amount}, Session=${locked.amountInPaise}`
+        );
+        await PaymentSession.findByIdAndUpdate(locked._id, { status: "pending" });
+        return;
       }
 
-      return res.status(200).json({ status: "ok" });
+      const mongoSession = await mongoose.startSession();
+      let createErr = null;
+      try {
+        mongoSession.startTransaction();
+        const order = await createOrderFromSession(
+          locked,
+          { method: "razorpay", razorpayOrderId, razorpayPaymentId },
+          mongoSession
+        );
+        await mongoSession.commitTransaction();
+        await postOrderActions(order, locked);
+      } catch (err) {
+        await mongoSession.abortTransaction();
+        await PaymentSession.findByIdAndUpdate(locked._id, { status: "pending" });
+        createErr = err;
+      } finally {
+        mongoSession.endSession();
+      }
+
+      if (createErr) {
+        // Transient: retry.
+        throw new Error(`Order creation failed: ${createErr.message}`);
+      }
+      return;
     }
 
-    // --- refund.processed ---
-    if (event === "refund.processed") {
-      const refundEntity = payload.refund.entity;
-      const paymentId = refundEntity.payment_id;
-      const refundId = refundEntity.id;
-      const refundAmountPaise = refundEntity.amount;
-
-      const order = await Order.findOne({
-        "payment.razorpayPaymentId": paymentId,
-      });
-      if (!order) {
-        return res.status(200).json({ status: "ok" });
-      }
-
-      // Update matching refund entry
-      const refundEntry = order.payment.refunds?.find(
-        (r) => r.refundId === refundId
-      );
-      if (refundEntry) {
-        refundEntry.status = "processed";
-      }
-
-      // Determine if full or partial
-      const totalPaise = Math.round(order.pricing.total * 100);
-      const totalRefundedPaise = (order.payment.refunds || [])
-        .filter((r) => r.status === "processed" || r.refundId === refundId)
-        .reduce((sum, r) => sum + (r.amount || 0), 0);
-
-      if (totalRefundedPaise >= totalPaise) {
-        order.payment.status = "refunded";
-        order.status = "refunded";
-      } else {
-        order.payment.status = "partially_refunded";
-      }
-
-      await order.save();
-      return res.status(200).json({ status: "ok" });
-    }
-
-    // Unhandled event -- return 200 to prevent Razorpay retries
-    res.status(200).json({ status: "ok" });
-  } catch (error) {
-    console.error("Webhook error:", error);
-    // Return 200 to prevent Razorpay retry storms on persistent errors
-    res.status(200).json({ status: "ok" });
+    // expired or failed session -- log for investigation, acknowledge.
+    console.error(
+      `Webhook: ${event} for session in status "${session.status}" (session: ${session._id})`
+    );
+    return;
   }
+
+  // --- payment.authorized ---
+  // Standard checkout auto-captures; authorization is an intermediate state.
+  // Capture handling happens on payment.captured. Acknowledge only.
+  if (event === "payment.authorized") {
+    return;
+  }
+
+  // --- payment.failed ---
+  if (event === "payment.failed") {
+    const razorpayOrderId = payload.payment.entity.order_id;
+
+    // Atomic transition: only process if still pending
+    const session = await PaymentSession.findOneAndUpdate(
+      { razorpayOrderId, status: "pending" },
+      { $set: { status: "failed" } },
+      { new: true }
+    );
+
+    if (!session) {
+      // No session or already handled -- fallback for legacy orders
+      const existingSession = await PaymentSession.findOne({ razorpayOrderId });
+      if (!existingSession) {
+        await Order.findOneAndUpdate(
+          { "payment.razorpayOrderId": razorpayOrderId },
+          { "payment.status": "failed", status: "cancelled" }
+        );
+      }
+      return;
+    }
+
+    // Release reserved stock
+    await releaseStock(session.stockReservations);
+
+    // Cancel Agenda expiry job
+    if (session.agendaJobId) {
+      try {
+        const agenda = require("../config/agenda");
+        await agenda.cancel({
+          _id: new mongoose.Types.ObjectId(session.agendaJobId),
+        });
+      } catch {
+        // Non-critical
+      }
+    }
+
+    return;
+  }
+
+  // --- refund.created ---
+  if (event === "refund.created") {
+    const refundEntity = payload.refund.entity;
+    const order = await Order.findOne({
+      "payment.razorpayPaymentId": refundEntity.payment_id,
+    });
+    if (!order) return;
+
+    const entry = order.payment.refunds?.find(
+      (r) => r.refundId === refundEntity.id
+    );
+    // Only advance a not-yet-terminal entry to "initiated".
+    if (entry && entry.status !== "processed" && entry.status !== "failed") {
+      entry.status = "initiated";
+      await order.save();
+    }
+    return;
+  }
+
+  // --- refund.processed ---
+  if (event === "refund.processed") {
+    const refundEntity = payload.refund.entity;
+    const paymentId = refundEntity.payment_id;
+    const refundId = refundEntity.id;
+
+    const order = await Order.findOne({
+      "payment.razorpayPaymentId": paymentId,
+    });
+    if (!order) return;
+
+    const refundEntry = order.payment.refunds?.find(
+      (r) => r.refundId === refundId
+    );
+    if (refundEntry) {
+      refundEntry.status = "processed";
+    }
+
+    // Determine if full or partial (count this refund even if the entry was missing)
+    const totalPaise = Math.round(order.pricing.total * 100);
+    const totalRefundedPaise = (order.payment.refunds || [])
+      .filter((r) => r.status === "processed" || r.refundId === refundId)
+      .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+    if (totalRefundedPaise >= totalPaise) {
+      order.payment.status = "refunded";
+      order.status = "refunded";
+    } else {
+      order.payment.status = "partially_refunded";
+    }
+
+    await order.save();
+    return;
+  }
+
+  // --- refund.failed ---
+  if (event === "refund.failed") {
+    const refundEntity = payload.refund.entity;
+    const order = await Order.findOne({
+      "payment.razorpayPaymentId": refundEntity.payment_id,
+    });
+    if (!order) return;
+
+    const refundEntry = order.payment.refunds?.find(
+      (r) => r.refundId === refundEntity.id
+    );
+    if (refundEntry) {
+      refundEntry.status = "failed";
+    }
+
+    // Recompute payment status from the refunds that actually succeeded.
+    const totalPaise = Math.round(order.pricing.total * 100);
+    const processedPaise = (order.payment.refunds || [])
+      .filter((r) => r.status === "processed")
+      .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+    if (processedPaise <= 0) {
+      order.payment.status = "paid";
+    } else if (processedPaise >= totalPaise) {
+      order.payment.status = "refunded";
+    } else {
+      order.payment.status = "partially_refunded";
+    }
+
+    await order.save();
+    return;
+  }
+
+  // Unhandled event -- acknowledge so Razorpay stops retrying.
+  console.log(`[Webhook] Unhandled event: ${event}`);
 };
 
 module.exports = { createRazorpayOrder, verifyRazorpayPayment, handleWebhook };
