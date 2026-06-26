@@ -3,14 +3,14 @@ const Product = require("../../models/Product");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
-const { uploadToCloudinary } = require("../../services/upload.service");
+const { uploadImage } = require("../../services/upload.service");
 
 // Resolve a banner field: a newly uploaded file wins, otherwise fall back to
 // the string sent in the body (existing URL to keep, or "" to clear).
 async function resolveBanner(req, field) {
   const file = req.files?.[field]?.[0];
   if (file) {
-    const uploaded = await uploadToCloudinary(file.buffer, "categories");
+    const uploaded = await uploadImage(file.buffer, "categories", file.mimetype);
     return uploaded.url;
   }
   if (typeof req.body[field] === "string") {

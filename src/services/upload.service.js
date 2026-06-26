@@ -1,33 +1,15 @@
-const cloudinary = require("../config/cloudinary");
+const provider = require("./storage");
 
-const uploadToCloudinary = (fileBuffer, folder) => {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "image" },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve({ url: result.secure_url, publicId: result.public_id });
-      }
-    );
-    stream.end(fileBuffer);
-  });
-};
+// Vendor-neutral upload façade. Delegates to the active storage provider
+// (Cloudinary or S3, chosen by STORAGE_PROVIDER). Each returns { url, publicId },
+// where publicId is the provider's delete handle (Cloudinary public_id / S3 key).
 
-const deleteFromCloudinary = async (publicId) => {
-  await cloudinary.uploader.destroy(publicId);
-};
+const uploadImage = (fileBuffer, folder, mimetype) =>
+  provider.uploadImage(fileBuffer, folder, mimetype);
 
-const uploadVideoToCloudinary = (fileBuffer, folder) => {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "video" },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve({ url: result.secure_url, publicId: result.public_id });
-      }
-    );
-    stream.end(fileBuffer);
-  });
-};
+const uploadVideo = (fileBuffer, folder, mimetype) =>
+  provider.uploadVideo(fileBuffer, folder, mimetype);
 
-module.exports = { uploadToCloudinary, deleteFromCloudinary, uploadVideoToCloudinary };
+const deleteFile = (handle) => provider.remove(handle);
+
+module.exports = { uploadImage, uploadVideo, deleteFile };

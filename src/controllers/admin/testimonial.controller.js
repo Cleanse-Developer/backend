@@ -1,5 +1,5 @@
 const Testimonial = require("../../models/Testimonial");
-const { uploadToCloudinary } = require("../../services/upload.service");
+const { uploadImage } = require("../../services/upload.service");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -81,9 +81,10 @@ const createTestimonial = asyncHandler(async (req, res) => {
 
   // Handle image: file upload takes priority over URL string, per field independently
   if (req.files && req.files.beforeImage) {
-    const uploaded = await uploadToCloudinary(
+    const uploaded = await uploadImage(
       req.files.beforeImage[0].buffer,
-      TESTIMONIAL_IMAGE_FOLDER
+      TESTIMONIAL_IMAGE_FOLDER,
+      req.files.beforeImage[0].mimetype
     );
     data.beforeImage = uploaded.url;
   } else if (beforeImage) {
@@ -91,9 +92,10 @@ const createTestimonial = asyncHandler(async (req, res) => {
   }
 
   if (req.files && req.files.afterImage) {
-    const uploaded = await uploadToCloudinary(
+    const uploaded = await uploadImage(
       req.files.afterImage[0].buffer,
-      TESTIMONIAL_IMAGE_FOLDER
+      TESTIMONIAL_IMAGE_FOLDER,
+      req.files.afterImage[0].mimetype
     );
     data.afterImage = uploaded.url;
   } else if (afterImage) {
@@ -144,18 +146,20 @@ const updateTestimonial = asyncHandler(async (req, res) => {
 
   // Handle image uploads — file upload takes priority over URL string per field
   if (req.files && req.files.beforeImage) {
-    const uploaded = await uploadToCloudinary(
+    const uploaded = await uploadImage(
       req.files.beforeImage[0].buffer,
-      TESTIMONIAL_IMAGE_FOLDER
+      TESTIMONIAL_IMAGE_FOLDER,
+      req.files.beforeImage[0].mimetype
     );
     updateData.beforeImage = uploaded.url;
   }
   // If no file uploaded for beforeImage, body URL (if any) is already in updateData
 
   if (req.files && req.files.afterImage) {
-    const uploaded = await uploadToCloudinary(
+    const uploaded = await uploadImage(
       req.files.afterImage[0].buffer,
-      TESTIMONIAL_IMAGE_FOLDER
+      TESTIMONIAL_IMAGE_FOLDER,
+      req.files.afterImage[0].mimetype
     );
     updateData.afterImage = uploaded.url;
   }

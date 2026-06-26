@@ -1,5 +1,5 @@
 const Product = require("../../models/Product");
-const { uploadToCloudinary } = require("../../services/upload.service");
+const { uploadImage } = require("../../services/upload.service");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -29,7 +29,7 @@ async function applyProductImages(data, req, existingImages = []) {
   const files = req.files || [];
   if (files.length > 0) {
     const uploads = await Promise.all(
-      files.map((f) => uploadToCloudinary(f.buffer, PRODUCT_IMAGE_FOLDER))
+      files.map((f) => uploadImage(f.buffer, PRODUCT_IMAGE_FOLDER, f.mimetype))
     );
     const base = existingImages.length ? [...existingImages] : [];
     const newImages = uploads.map((img, i) => ({

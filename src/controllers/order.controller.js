@@ -76,7 +76,8 @@ const placeOrder = asyncHandler(async (req, res) => {
     req.user._id,
     giftWrap,
     specialCouponCode,
-    Number(loyaltyPointsToRedeem) || 0
+    Number(loyaltyPointsToRedeem) || 0,
+    { pincode: shippingInfo?.pincode, state: shippingInfo?.state }
   );
 
   // Build stock reservation items

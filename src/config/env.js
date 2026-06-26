@@ -23,9 +23,19 @@ const envSchema = Joi.object({
   MSG91_AUTHKEY: Joi.string().allow("").default(""),
   MSG91_VERIFY_URL: Joi.string().uri().default("https://control.msg91.com/api/v5/widget/verifyAccessToken"),
 
+  // Active storage backend for uploads. Flip to switch providers — no code change.
+  STORAGE_PROVIDER: Joi.string().valid("cloudinary", "s3").default("s3"),
+
   CLOUDINARY_CLOUD_NAME: Joi.string().default(""),
   CLOUDINARY_API_KEY: Joi.string().default(""),
   CLOUDINARY_API_SECRET: Joi.string().default(""),
+
+  // AWS S3 + CloudFront (used when STORAGE_PROVIDER=s3)
+  AWS_REGION: Joi.string().default("ap-south-1"),
+  AWS_ACCESS_KEY_ID: Joi.string().allow("").default(""),
+  AWS_SECRET_ACCESS_KEY: Joi.string().allow("").default(""),
+  AWS_S3_BUCKET: Joi.string().allow("").default(""),
+  CLOUDFRONT_URL: Joi.string().allow("").default(""),
 
   SMTP_HOST: Joi.string().default("smtp.gmail.com"),
   SMTP_PORT: Joi.number().default(587),

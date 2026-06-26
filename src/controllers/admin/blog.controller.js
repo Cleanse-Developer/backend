@@ -1,6 +1,6 @@
 const Blog = require("../../models/Blog");
 const Author = require("../../models/Author");
-const { uploadToCloudinary } = require("../../services/upload.service");
+const { uploadImage } = require("../../services/upload.service");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -111,9 +111,10 @@ const createBlog = asyncHandler(async (req, res) => {
   // Handle base image upload if file present
   const baseImageFile = req.files?.image?.[0];
   if (baseImageFile) {
-    const uploaded = await uploadToCloudinary(
+    const uploaded = await uploadImage(
       baseImageFile.buffer,
-      BLOG_IMAGE_FOLDER
+      BLOG_IMAGE_FOLDER,
+      baseImageFile.mimetype
     );
     blogData.image = uploaded.url;
   } else if (image) {
@@ -159,9 +160,10 @@ const updateBlog = asyncHandler(async (req, res) => {
   // Handle base image upload
   const baseImageFile = req.files?.image?.[0];
   if (baseImageFile) {
-    const uploaded = await uploadToCloudinary(
+    const uploaded = await uploadImage(
       baseImageFile.buffer,
-      BLOG_IMAGE_FOLDER
+      BLOG_IMAGE_FOLDER,
+      baseImageFile.mimetype
     );
     updateData.image = uploaded.url;
   }

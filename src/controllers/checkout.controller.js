@@ -123,7 +123,8 @@ const initiateCheckout = asyncHandler(async (req, res) => {
     req.user._id,
     giftWrap || false,
     specialCouponCode || null,
-    Number(loyaltyPointsToRedeem) || 0
+    Number(loyaltyPointsToRedeem) || 0,
+    { pincode: shippingInfo?.pincode, state: shippingInfo?.state }
   );
 
   const amountInPaise = Math.round(pricing.total * 100);

@@ -1,5 +1,6 @@
 const Bundle = require("../models/Bundle");
 const User = require("../models/User");
+const ShippingZone = require("../models/ShippingZone");
 const { validateCoupon } = require("./coupon.service");
 const { resolvePromotions } = require("./promotionResolver.service");
 const {
@@ -149,6 +150,51 @@ const calculateBundleDiscounts = async (cartItems) => {
 };
 
 /**
+ * Resolve the active shipping rate + free-shipping threshold.
+ *
+ * Source of truth is the admin-configured ShippingZone collection, NOT the
+ * hardcoded SHIPPING constants (those are only a last-resort fallback when no
+ * zone exists yet).
+ *
+ * Resolution order, given an optional delivery location:
+ *   1. Zone whose pincodes include location.pincode
+ *   2. Zone whose states include location.state
+ *   3. Any single active zone (single-zone deployments)
+ *   4. SHIPPING constants
+ *
+ * @param {{ pincode?: string, state?: string } | null} location
+ * @returns {Promise<{ standardRate: number, freeAbove: number }>}
+ */
+const resolveShippingConfig = async (location = null) => {
+  const zones = await ShippingZone.find({ isActive: true })
+    .select("pincodes states rates")
+    .lean();
+
+  if (!zones.length) {
+    return {
+      standardRate: SHIPPING.STANDARD_RATE,
+      freeAbove: SHIPPING.FREE_THRESHOLD,
+    };
+  }
+
+  const pincode = location?.pincode ? String(location.pincode).trim() : null;
+  const state = location?.state ? String(location.state).trim().toLowerCase() : null;
+
+  let zone =
+    (pincode && zones.find((z) => z.pincodes?.includes(pincode))) ||
+    (state &&
+      zones.find((z) =>
+        z.states?.some((s) => s.trim().toLowerCase() === state)
+      )) ||
+    zones[0];
+
+  return {
+    standardRate: zone.rates?.standard ?? SHIPPING.STANDARD_RATE,
+    freeAbove: zone.rates?.freeAbove ?? SHIPPING.FREE_THRESHOLD,
+  };
+};
+
+/**
  * Calculate complete pricing breakdown for an order.
  *
  * Discount application order:
@@ -177,7 +223,8 @@ const calculatePricing = async (
   userId,
   giftWrap = false,
   specialCouponCode = null,
-  loyaltyPointsToRedeem = 0
+  loyaltyPointsToRedeem = 0,
+  shippingLocation = null
 ) => {
   // 1. Calculate subtotal
   const subtotal = cart.items.reduce((sum, item) => {
@@ -207,8 +254,10 @@ const calculatePricing = async (
   // Effective subtotal after bundles + tier
   const effectiveAfterBundleTier = Math.max(0, subtotal - bundleDiscountTotal - tierDiscount);
 
-  // Shipping cost (base, before any adjustments)
-  const baseShippingCost = subtotal >= SHIPPING.FREE_THRESHOLD ? 0 : SHIPPING.STANDARD_RATE;
+  // Shipping cost (base, before any adjustments) — rate + free threshold come
+  // from the admin-configured ShippingZone, not the hardcoded constants.
+  const { standardRate, freeAbove } = await resolveShippingConfig(shippingLocation);
+  const baseShippingCost = subtotal >= freeAbove ? 0 : standardRate;
 
   const promotionResult = await resolvePromotions(
     cart.items,
@@ -328,7 +377,7 @@ const calculatePricing = async (
   const loyaltyPoints = Math.floor(total * earnRate);
 
   // 10. Tier progress info for the UI progress bar
-  const tierProgress = calculateTierProgress(subtotal);
+  const tierProgress = calculateTierProgress(subtotal, freeAbove);
 
   return {
     subtotal,
@@ -359,7 +408,7 @@ const calculatePricing = async (
  * Calculate tier progress for UI display (progress bar in cart).
  * Shows current tier, next tier, and how much more to spend.
  */
-const calculateTierProgress = (subtotal) => {
+const calculateTierProgress = (subtotal, freeShippingThreshold = SHIPPING.FREE_THRESHOLD) => {
   const tiers = [...DISCOUNT_TIERS].reverse(); // ascending order for progress
 
   let currentTier = null;
@@ -403,11 +452,16 @@ const calculateTierProgress = (subtotal) => {
     })),
     // Also include free shipping threshold
     freeShipping: {
-      threshold: SHIPPING.FREE_THRESHOLD,
-      reached: subtotal >= SHIPPING.FREE_THRESHOLD,
-      amountNeeded: Math.max(0, SHIPPING.FREE_THRESHOLD - subtotal),
+      threshold: freeShippingThreshold,
+      reached: subtotal >= freeShippingThreshold,
+      amountNeeded: Math.max(0, freeShippingThreshold - subtotal),
     },
   };
 };
 
-module.exports = { calculatePricing, calculateBundleDiscounts, calculateTierProgress };
+module.exports = {
+  calculatePricing,
+  calculateBundleDiscounts,
+  calculateTierProgress,
+  resolveShippingConfig,
+};

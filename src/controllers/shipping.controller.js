@@ -2,6 +2,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const { checkServiceability } = require("../services/shiprocket.service");
+const { resolveShippingConfig } = require("../services/pricing.service");
 const ShippingZone = require("../models/ShippingZone");
 
 const checkDelivery = asyncHandler(async (req, res) => {
@@ -44,4 +45,16 @@ const checkDelivery = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { ...result, message }, message));
 });
 
-module.exports = { checkDelivery };
+/**
+ * GET /api/shipping/config
+ * Public — returns the active standard shipping rate + free-shipping threshold
+ * so the cart can display real (admin-configured) shipping instead of hardcoded
+ * values. Optional ?pincode= / ?state= narrows to a specific zone.
+ */
+const getShippingConfig = asyncHandler(async (req, res) => {
+  const { pincode, state } = req.query;
+  const config = await resolveShippingConfig({ pincode, state });
+  res.status(200).json(new ApiResponse(200, config));
+});
+
+module.exports = { checkDelivery, getShippingConfig };

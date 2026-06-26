@@ -1,4 +1,4 @@
-const { uploadToCloudinary } = require("../services/upload.service");
+const { uploadImage } = require("../services/upload.service");
 
 const BREAKPOINTS = ["desktop", "tablet", "mobile"];
 
@@ -13,7 +13,7 @@ async function buildSourcesFromFields(files, prefix, existing, folder) {
   for (const bp of BREAKPOINTS) {
     const file = files?.[fieldName(prefix, bp)]?.[0];
     if (file) {
-      const uploaded = await uploadToCloudinary(file.buffer, folder);
+      const uploaded = await uploadImage(file.buffer, folder, file.mimetype);
       sources[bp] = uploaded.url;
     } else if (existing && existing[bp]) {
       sources[bp] = existing[bp];
@@ -29,7 +29,8 @@ async function resolveProductImages(metadata, fileMap, folder) {
   const getUrl = async (fileKey) => {
     if (!fileKey || !fileMap[fileKey]) return null;
     if (urlCache[fileKey]) return urlCache[fileKey];
-    const uploaded = await uploadToCloudinary(fileMap[fileKey].buffer, folder);
+    const file = fileMap[fileKey];
+    const uploaded = await uploadImage(file.buffer, folder, file.mimetype);
     urlCache[fileKey] = uploaded.url;
     return uploaded.url;
   };

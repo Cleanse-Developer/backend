@@ -1,5 +1,5 @@
 const Settings = require("../../models/Settings");
-const { uploadToCloudinary, uploadVideoToCloudinary } = require("../../services/upload.service");
+const { uploadImage, uploadVideo } = require("../../services/upload.service");
 const ApiResponse = require("../../utils/ApiResponse");
 const ApiError = require("../../utils/ApiError");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -22,7 +22,7 @@ const uploadCmsImage = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No image file provided");
   }
 
-  const result = await uploadToCloudinary(req.file.buffer, "cleanse/cms");
+  const result = await uploadImage(req.file.buffer, "cleanse/cms", req.file.mimetype);
   res.json(ApiResponse.ok(result, "Image uploaded successfully"));
 });
 
@@ -32,7 +32,7 @@ const uploadCmsVideo = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No video file provided");
   }
 
-  const result = await uploadVideoToCloudinary(req.file.buffer, "cleanse/cms");
+  const result = await uploadVideo(req.file.buffer, "cleanse/cms", req.file.mimetype);
   res.json(ApiResponse.ok(result, "Video uploaded successfully"));
 });
 
