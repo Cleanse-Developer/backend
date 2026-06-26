@@ -18,6 +18,11 @@ const envSchema = Joi.object({
   SHIPROCKET_EMAIL: Joi.string().default(""),
   SHIPROCKET_PASSWORD: Joi.string().default(""),
 
+  // MSG91 OTP widget. AuthKey is for server-side access-token verification;
+  // left optional (default "") while that step is deferred — see msg91.service.js.
+  MSG91_AUTHKEY: Joi.string().allow("").default(""),
+  MSG91_VERIFY_URL: Joi.string().uri().default("https://control.msg91.com/api/v5/widget/verifyAccessToken"),
+
   CLOUDINARY_CLOUD_NAME: Joi.string().default(""),
   CLOUDINARY_API_KEY: Joi.string().default(""),
   CLOUDINARY_API_SECRET: Joi.string().default(""),

@@ -3,7 +3,8 @@ const mongoose = require("mongoose");
 const userSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true, trim: true, maxlength: 100 },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    // Optional + sparse-unique: phone-only OTP accounts have no email yet.
+    email: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     phone: { type: String, unique: true, sparse: true, trim: true },
     countryCode: { type: String, default: "+91", trim: true },
     password: { type: String, select: false },

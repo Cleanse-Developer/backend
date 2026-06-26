@@ -124,7 +124,7 @@ const toggleNewsletterPopup = asyncHandler(async (req, res) => {
 
 // PATCH /api/admin/newsletter/config
 const updatePopupConfig = asyncHandler(async (req, res) => {
-  const { tag, heading, description, note, image, delaySeconds } = req.body;
+  const { tag, heading, description, note, image, delaySeconds, discountPercent } = req.body;
 
   const config = {};
   if (tag !== undefined) config.tag = String(tag).slice(0, 100);
@@ -138,6 +138,13 @@ const updatePopupConfig = asyncHandler(async (req, res) => {
       throw ApiError.badRequest("delaySeconds must be between 1 and 120");
     }
     config.delaySeconds = val;
+  }
+  if (discountPercent !== undefined) {
+    const val = Number(discountPercent);
+    if (isNaN(val) || val < 1 || val > 100) {
+      throw ApiError.badRequest("discountPercent must be between 1 and 100");
+    }
+    config.discountPercent = Math.round(val);
   }
 
   // Merge with existing config

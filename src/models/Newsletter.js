@@ -16,6 +16,7 @@ const newsletterSchema = new mongoose.Schema(
       default: "popup",
     },
     isActive: { type: Boolean, default: true },
+    couponCode: { type: String, default: null },
     unsubscribeToken: {
       type: String,
       unique: true,

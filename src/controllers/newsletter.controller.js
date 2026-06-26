@@ -3,10 +3,51 @@ const asyncHandler = require("../utils/asyncHandler");
 const ApiResponse = require("../utils/ApiResponse");
 const ApiError = require("../utils/ApiError");
 const Newsletter = require("../models/Newsletter");
+const Coupon = require("../models/Coupon");
+const Settings = require("../models/Settings");
 const { sendWelcomeEmail } = require("../services/email.service");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_SOURCES = ["popup", "footer", "spin_wheel", "checkout"];
+
+// Coupons issued on signup never expire (Coupon model requires validTill).
+const NO_EXPIRY = new Date("2099-12-31");
+
+// Read the admin-configured signup discount percent (default 10, clamped 1-100).
+const getSignupDiscountPercent = async () => {
+  const doc = await Settings.findOne({ key: "newsletterPopupConfig" }).lean();
+  const raw = Number(doc?.value?.discountPercent);
+  if (!Number.isFinite(raw)) return 10;
+  return Math.min(100, Math.max(1, Math.round(raw)));
+};
+
+// Generate a unique WELCOME-{pct}-{HEX} coupon code with collision retry.
+const generateSignupCouponCode = async (pct) => {
+  for (let i = 0; i < 20; i++) {
+    const bytes = i < 10 ? 4 : 6;
+    const code = `WELCOME-${pct}-${crypto.randomBytes(bytes).toString("hex").toUpperCase()}`;
+    const exists = await Coupon.exists({ code });
+    if (!exists) return code;
+  }
+  throw new Error("Failed to generate unique newsletter coupon code after 20 attempts");
+};
+
+// Create a single-use percentage coupon for a new subscriber.
+const issueSignupCoupon = async () => {
+  const pct = await getSignupDiscountPercent();
+  const code = await generateSignupCouponCode(pct);
+  await Coupon.create({
+    code,
+    description: `Newsletter signup reward: ${pct}% off`,
+    discountType: "percentage",
+    discountValue: pct,
+    validTill: NO_EXPIRY,
+    usageLimit: 1,
+    perUserLimit: 1,
+    isActive: true,
+  });
+  return code;
+};
 
 const subscribe = asyncHandler(async (req, res) => {
   const { email, source } = req.body;
@@ -39,7 +80,10 @@ const subscribe = asyncHandler(async (req, res) => {
       .json(new ApiResponse(200, { success: true, alreadySubscribed: true }, "Already subscribed"));
   }
 
-  // New subscriber: insert with source and a fresh unsubscribe token.
+  // New subscriber: issue a single-use signup coupon, then insert with source
+  // and a fresh unsubscribe token.
+  const couponCode = await issueSignupCoupon();
+
   // Handle race: another concurrent request may have inserted between our
   // findOne() check and create(). MongoDB's unique index will throw E11000.
   let subscriber;
@@ -48,11 +92,14 @@ const subscribe = asyncHandler(async (req, res) => {
       email: trimmed,
       source: safeSource,
       isActive: true,
+      couponCode,
       unsubscribeToken: crypto.randomBytes(32).toString("hex"),
     });
   } catch (err) {
     if (err && err.code === 11000) {
-      // Concurrent insert won the race — treat as already-subscribed
+      // Concurrent insert won the race — treat as already-subscribed.
+      // Disable the orphaned coupon we just created so it can't be used.
+      await Coupon.findOneAndUpdate({ code: couponCode }, { isActive: false });
       return res
         .status(200)
         .json(
@@ -67,14 +114,18 @@ const subscribe = asyncHandler(async (req, res) => {
   }
 
   // Best-effort welcome email (non-blocking)
-  sendWelcomeEmail(subscriber).catch((err) => {
+  sendWelcomeEmail(subscriber, couponCode).catch((err) => {
     console.error("Newsletter welcome email failed:", err.message);
   });
 
   res
     .status(200)
     .json(
-      new ApiResponse(200, { success: true }, "Subscribed to newsletter successfully")
+      new ApiResponse(
+        200,
+        { success: true, couponCode },
+        "Subscribed to newsletter successfully"
+      )
     );
 });
 

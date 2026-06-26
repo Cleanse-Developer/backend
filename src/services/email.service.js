@@ -88,7 +88,15 @@ const renderNewsletterFooter = (unsubscribeUrl) => `
   </p>
 `;
 
-const sendWelcomeEmail = async (subscriber) => {
+const renderCouponBlock = (code) => `
+  <div style="margin: 20px 0; padding: 20px; background: #f5f0eb; border-radius: 8px; text-align: center;">
+    <p style="margin: 0 0 8px; font-size: 13px; color: #666;">YOUR WELCOME DISCOUNT</p>
+    <div style="font-size: 24px; font-weight: bold; letter-spacing: 4px; color: #4F2C22;">${code}</div>
+    <p style="margin: 8px 0 0; font-size: 13px; color: #666;">Apply this code at checkout.</p>
+  </div>
+`;
+
+const sendWelcomeEmail = async (subscriber, couponCode = null) => {
   const unsubscribeUrl = buildUnsubscribeUrl(subscriber.unsubscribeToken);
   return sendEmail({
     to: subscriber.email,
@@ -97,6 +105,7 @@ const sendWelcomeEmail = async (subscriber) => {
       <div style="font-family: Georgia, serif; max-width: 540px; margin: 0 auto; padding: 24px; color: #2a2018;">
         <h2 style="color: #4F2C22;">Welcome to Cleanse Ayurveda</h2>
         <p>Thanks for subscribing! You'll be the first to know about new products, ayurvedic tips, and exclusive offers.</p>
+        ${couponCode ? renderCouponBlock(couponCode) : ""}
         <p>In the meantime, explore our collection at <a href="${process.env.FRONTEND_URL || "/"}">${process.env.FRONTEND_URL || "cleanseayurveda.com"}</a>.</p>
         ${renderNewsletterFooter(unsubscribeUrl)}
       </div>

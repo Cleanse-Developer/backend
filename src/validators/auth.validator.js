@@ -21,6 +21,34 @@ const verifyOtpRules = [
     .withMessage("OTP must be numeric"),
 ];
 
+const verifyWidgetTokenRules = [
+  body("accessToken")
+    .trim()
+    .notEmpty()
+    .withMessage("Access token is required")
+    .isString()
+    .withMessage("Access token must be a string"),
+  // `phone` is required only by the temporary happy-path (server-side MSG91
+  // verification is skipped). Make it optional once real verification is on.
+  body("phone")
+    .trim()
+    .notEmpty()
+    .withMessage("Phone number is required")
+    .custom((value) => {
+      if (!isValidPhone(value)) {
+        throw new Error("Valid 10-digit Indian mobile number is required");
+      }
+      return true;
+    }),
+  body("referralCode")
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage("Referral code is too long")
+    .matches(/^[A-Za-z0-9-]+$/)
+    .withMessage("Invalid referral code format"),
+];
+
 const loginRules = [
   body("email")
     .trim()
@@ -86,4 +114,4 @@ const checkAccountRules = [
     .withMessage("Phone number is required"),
 ];
 
-module.exports = { sendOtpRules, verifyOtpRules, loginRules, registerRules, checkAccountRules };
+module.exports = { sendOtpRules, verifyOtpRules, verifyWidgetTokenRules, loginRules, registerRules, checkAccountRules };

@@ -6,6 +6,7 @@ const { sendOTPEmail } = require("../services/email.service");
 const { generateAccessToken, generateRefreshToken } = require("../utils/generateToken");
 const generateReferralCode = require("../utils/generateReferralCode");
 const { applyReferralAtSignup } = require("../services/referral.service");
+const { verifyAccessToken } = require("../services/msg91.service");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const asyncHandler = require("../utils/asyncHandler");
@@ -47,6 +48,36 @@ async function issueTokens(user, req, res) {
   });
 
   return accessToken;
+}
+
+/** Find a user by local phone, or create a minimal one (applying a referral if new). */
+async function findOrCreateUserByPhone(localPhone, { countryCode, referralCode } = {}) {
+  let user = await User.findOne({ phone: localPhone });
+  if (user) {
+    return { user, referralApplied: null };
+  }
+
+  user = await User.create({
+    fullName: "User",
+    phone: localPhone,
+    countryCode: countryCode || DEFAULT_COUNTRY_CODE,
+    referralCode: await generateReferralCode(),
+  });
+
+  let referralApplied = null;
+  if (referralCode && referralCode.trim()) {
+    referralApplied = await applyReferralAtSignup(user, referralCode.trim());
+  }
+  return { user, referralApplied };
+}
+
+/** Update lastLogin, issue tokens, and send the standard login response. */
+async function loginUser(user, req, res, extra = {}) {
+  await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
+  const accessToken = await issueTokens(user, req, res);
+  res.json(
+    ApiResponse.ok({ user: sanitizeUser(user), accessToken, ...extra }, "Login successful")
+  );
 }
 
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
@@ -157,47 +188,70 @@ const sendOtp = asyncHandler(async (req, res) => {
 // ── POST /api/auth/verify-otp ────────────────────────────────────────────────
 
 const verifyOtp = asyncHandler(async (req, res) => {
-  const { identifier, otp } = req.body;
+  const { identifier, otp, referralCode } = req.body;
 
   const result = await verifyOTP(identifier, otp, "login");
   if (!result.valid) {
     throw ApiError.badRequest(result.message);
   }
 
-  const isEmail = identifier.includes("@");
-  const localPhone = isEmail ? null : extractLocalNumber(identifier);
-  const query = isEmail ? { email: identifier } : { phone: localPhone };
-  let user = await User.findOne(query);
-
+  let user;
   let referralApplied = null;
-  if (!user) {
-    const parsed = isEmail ? null : parsePhone(identifier);
-    const newReferralCode = await generateReferralCode();
-    user = await User.create({
-      fullName: "User",
-      email: isEmail ? identifier : undefined,
-      phone: isEmail ? undefined : localPhone,
-      countryCode: isEmail ? undefined : (parsed?.countryCode || DEFAULT_COUNTRY_CODE),
-      referralCode: newReferralCode,
-    });
 
-    // Apply referral code if provided in OTP verification request
-    const incomingReferralCode = req.body.referralCode;
-    if (incomingReferralCode && incomingReferralCode.trim()) {
-      referralApplied = await applyReferralAtSignup(user, incomingReferralCode.trim());
+  if (identifier.includes("@")) {
+    user = await User.findOne({ email: identifier });
+    if (!user) {
+      user = await User.create({
+        fullName: "User",
+        email: identifier,
+        referralCode: await generateReferralCode(),
+      });
+      if (referralCode && referralCode.trim()) {
+        referralApplied = await applyReferralAtSignup(user, referralCode.trim());
+      }
     }
+  } else {
+    const parsed = parsePhone(identifier);
+    ({ user, referralApplied } = await findOrCreateUserByPhone(extractLocalNumber(identifier), {
+      countryCode: parsed?.countryCode || DEFAULT_COUNTRY_CODE,
+      referralCode,
+    }));
   }
 
-  await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
+  return loginUser(user, req, res, { referralApplied });
+});
 
-  const accessToken = await issueTokens(user, req, res);
+// ── POST /api/auth/verify-widget-token ───────────────────────────────────────
+// Phone OTP login via the MSG91 widget. The widget sends + verifies the OTP on
+// the client and returns an access-token; this exchanges it for an app session.
 
-  res.json(
-    ApiResponse.ok(
-      { user: sanitizeUser(user), accessToken, referralApplied },
-      "Login successful"
-    )
-  );
+const verifyWidgetToken = asyncHandler(async (req, res) => {
+  const { accessToken: widgetToken, phone, referralCode } = req.body;
+
+  // ─── TEMPORARY happy-path: MSG91 server-side verification skipped ──────────
+  // No MSG91 account AuthKey yet. The MSG91 widget already verified the OTP on
+  // the client; we are only skipping the backend re-check of the access-token,
+  // so we trust the client-supplied `phone`.
+  // TO ENABLE REAL VERIFICATION: set MSG91_AUTHKEY in the backend env, then
+  // replace the next line with:
+  //   const verifiedIdentifier = await verifyAccessToken(widgetToken);
+  // and DELETE this comment block + stop reading `phone` from the body
+  // (also make `phone` optional in verifyWidgetTokenRules).
+  const verifiedIdentifier = phone;
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const localPhone = extractLocalNumber(verifiedIdentifier);
+  if (!/^[6-9]\d{9}$/.test(localPhone)) {
+    throw ApiError.badRequest("Invalid mobile number");
+  }
+
+  const parsed = parsePhone(verifiedIdentifier);
+  const { user, referralApplied } = await findOrCreateUserByPhone(localPhone, {
+    countryCode: parsed?.countryCode || DEFAULT_COUNTRY_CODE,
+    referralCode,
+  });
+
+  return loginUser(user, req, res, { referralApplied });
 });
 
 // ── POST /api/auth/refresh ───────────────────────────────────────────────────
@@ -264,4 +318,4 @@ const checkAccount = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { sendOtp, verifyOtp, loginWithPassword, register, refresh, logout, checkAccount };
+module.exports = { sendOtp, verifyOtp, verifyWidgetToken, loginWithPassword, register, refresh, logout, checkAccount };

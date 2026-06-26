@@ -214,6 +214,7 @@ const getPublicSettings = asyncHandler(async (req, res) => {
       note: "No spam, unsubscribe anytime.",
       image: null,
       delaySeconds: 8,
+      discountPercent: 10,
     },
   };
 
