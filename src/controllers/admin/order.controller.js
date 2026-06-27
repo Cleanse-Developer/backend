@@ -1,32 +1,146 @@
 const Order = require("../../models/Order");
-const Product = require("../../models/Product");
-const Coupon = require("../../models/Coupon");
-const SpecialCoupon = require("../../models/SpecialCoupon");
-const User = require("../../models/User");
-const LoyaltyTransaction = require("../../models/LoyaltyTransaction");
-const { reversePoints } = require("../../services/loyalty.service");
-const { reverseReferralReward } = require("../../services/referral.service");
 const asyncHandler = require("../../utils/asyncHandler");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const { paginationMeta } = require("../../utils/pagination");
-const { issueRefund } = require("../../services/razorpay.service");
-const { createShipment } = require("../../services/shiprocket.service");
+const { processOrderRefund } = require("../../services/refund.service");
+const {
+  shipForward,
+  createShipment,
+  assignAWB,
+  requestPickup,
+  generateLabel,
+  generateManifest,
+  cancelOrder,
+  cancelShipment,
+  createReturnOrder,
+} = require("../../services/shiprocket.service");
 
 const VALID_TRANSITIONS = {
   pending: ["confirmed", "cancelled"],
   confirmed: ["processing", "cancelled"],
   processing: ["packed", "cancelled"],
   packed: ["shipped", "cancelled"],
-  shipped: ["in_transit"],
-  in_transit: ["out_for_delivery"],
-  out_for_delivery: ["delivered"],
+  shipped: ["in_transit", "rto_in_transit"],
+  in_transit: ["out_for_delivery", "rto_in_transit"],
+  out_for_delivery: ["delivered", "rto_in_transit"],
   delivered: ["return_requested"],
+  rto_in_transit: ["rto_delivered"],
+  rto_delivered: ["refund_initiated"],
   return_requested: ["return_approved", "delivered"],
   return_approved: ["returned"],
   returned: ["refund_initiated"],
   refund_initiated: ["refunded"],
   cancelled: ["refund_initiated"],
+};
+
+const note = (order, text, by, at = new Date()) => {
+  order.adminNotes.push({ note: text, addedBy: by, addedAt: at });
+};
+
+/**
+ * Run the Shiprocket forward-fulfillment pipeline for an order. Prefers the
+ * one-call wrapper (create + AWB + pickup + label + manifest); falls back to
+ * the manual step chain if the wrapper is unavailable/partial. Best-effort:
+ * persists whatever succeeded and records failures as admin notes — never
+ * throws. Idempotent: skips create if already shipped, resumes at AWB if a
+ * shipment exists without an AWB.
+ */
+const runShipPipeline = async (order, byUser, at) => {
+  order.shipping = order.shipping || {};
+
+  // Idempotency: already fully shipped.
+  if (order.shipping.awbNumber) return;
+
+  // Try the atomic wrapper first, unless we already have a shipment id.
+  if (!order.shipping.shipmentId) {
+    try {
+      const r = await shipForward(
+        order,
+        process.env.SHIPROCKET_DEFAULT_COURIER_ID
+      );
+      const payload = r?.payload || r;
+      if (payload?.shipment_id) {
+        order.shipping.shiprocketOrderId = String(payload.order_id ?? "");
+        order.shipping.shipmentId = String(payload.shipment_id);
+        if (payload.awb_code) order.shipping.awbNumber = payload.awb_code;
+        if (payload.courier_name) order.shipping.courierName = payload.courier_name;
+        if (payload.label_url) order.shipping.labelUrl = payload.label_url;
+        if (payload.manifest_url) order.shipping.manifestUrl = payload.manifest_url;
+        if (payload.pickup_scheduled_date) {
+          const d = new Date(payload.pickup_scheduled_date);
+          if (!isNaN(d)) order.shipping.pickupScheduledDate = d;
+        }
+        if (order.shipping.awbNumber) {
+          order.shipping.trackingUrl = `https://shiprocket.co/tracking/${order.shipping.awbNumber}`;
+          note(order, `Shipment created via Shiprocket. AWB ${order.shipping.awbNumber}`, byUser, at);
+          return;
+        }
+      }
+    } catch (err) {
+      note(order, `Shiprocket forward-shipment failed, falling back: ${err.message}`, byUser, at);
+    }
+  }
+
+  // Fallback / resume: create -> assign AWB -> pickup -> label/manifest.
+  try {
+    if (!order.shipping.shipmentId) {
+      const created = await createShipment(order);
+      order.shipping.shiprocketOrderId = String(created.order_id ?? "");
+      order.shipping.shipmentId = String(created.shipment_id ?? "");
+    }
+    if (!order.shipping.shipmentId) {
+      note(order, "Shiprocket create returned no shipment_id", byUser, at);
+      return;
+    }
+
+    const awbRes = await assignAWB(
+      order.shipping.shipmentId,
+      process.env.SHIPROCKET_DEFAULT_COURIER_ID
+    );
+    const awbData = awbRes?.response?.data || awbRes;
+    order.shipping.awbNumber = awbData.awb_code || awbData.awb;
+    order.shipping.courierName = awbData.courier_name;
+    if (order.shipping.awbNumber) {
+      order.shipping.trackingUrl = `https://shiprocket.co/tracking/${order.shipping.awbNumber}`;
+    }
+
+    await requestPickup([order.shipping.shipmentId]).catch((e) =>
+      note(order, `Pickup request failed: ${e.message}`, byUser, at)
+    );
+    await generateLabel([order.shipping.shipmentId])
+      .then((l) => {
+        if (l?.label_url) order.shipping.labelUrl = l.label_url;
+      })
+      .catch((e) => note(order, `Label generation failed: ${e.message}`, byUser, at));
+    await generateManifest([order.shipping.shipmentId])
+      .then((m) => {
+        if (m?.manifest_url) order.shipping.manifestUrl = m.manifest_url;
+      })
+      .catch((e) => note(order, `Manifest generation failed: ${e.message}`, byUser, at));
+
+    note(order, `Shipment created (fallback). AWB ${order.shipping.awbNumber || "pending"}`, byUser, at);
+  } catch (err) {
+    note(order, `Shiprocket shipment creation failed: ${err.message}`, byUser, at);
+  }
+};
+
+/**
+ * Cancel an order/shipment at Shiprocket. Uses the AWB cancel endpoint when an
+ * AWB exists, otherwise the order cancel endpoint. Best-effort.
+ */
+const cancelAtShiprocket = async (order, byUser, at) => {
+  try {
+    if (order.shipping?.awbNumber) {
+      await cancelShipment([order.shipping.awbNumber]);
+      note(order, `Shiprocket shipment cancelled (AWB ${order.shipping.awbNumber})`, byUser, at);
+    } else if (order.shipping?.shiprocketOrderId) {
+      await cancelOrder([order.shipping.shiprocketOrderId]);
+      note(order, `Shiprocket order cancelled (${order.shipping.shiprocketOrderId})`, byUser, at);
+    }
+  } catch (err) {
+    note(order, `Shiprocket cancellation failed: ${err.message}`, byUser, at);
+  }
 };
 
 // GET /api/admin/orders
@@ -148,23 +262,15 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     addedAt: now,
   });
 
-  // If shipped, attempt Shiprocket shipment creation
+  // If shipped, run the Shiprocket fulfillment pipeline (best-effort: never
+  // fail the status update if Shiprocket errors).
   if (status === "shipped") {
-    try {
-      const shipment = await createShipment(order);
-      if (shipment) {
-        order.shipping.shiprocketOrderId = shipment.order_id?.toString();
-        order.shipping.awbNumber = shipment.awb_code;
-        order.shipping.courierName = shipment.courier_name;
-      }
-    } catch (err) {
-      // Don't fail the status update if Shiprocket errors
-      order.adminNotes.push({
-        note: `Shiprocket shipment creation failed: ${err.message}`,
-        addedBy: req.user._id,
-        addedAt: now,
-      });
-    }
+    await runShipPipeline(order, req.user._id, now);
+  }
+
+  // If cancelled and a shipment exists, cancel it at Shiprocket too.
+  if (status === "cancelled") {
+    await cancelAtShiprocket(order, req.user._id, now);
   }
 
   await order.save();
@@ -182,139 +288,12 @@ const processRefund = asyncHandler(async (req, res) => {
     throw ApiError.notFound("Order not found");
   }
 
-  if (order.payment.method !== "razorpay") {
-    throw ApiError.badRequest("Refunds are only supported for Razorpay payments");
-  }
-
-  const refundableStatuses = ["paid", "partially_refunded"];
-  if (!refundableStatuses.includes(order.payment.status)) {
-    throw ApiError.badRequest(
-      `Order payment must be in 'paid' or 'partially_refunded' status to process a refund`
-    );
-  }
-
-  if (!order.payment.razorpayPaymentId) {
-    throw ApiError.badRequest("No Razorpay payment ID found for this order");
-  }
-
-  // Idempotency: check for duplicate initiated refund with same amount
-  const refundAmountPaise = amount
-    ? Math.round(amount * 100)
-    : Math.round(order.pricing.total * 100);
-
-  const duplicateRefund = order.payment.refunds?.find(
-    (r) => r.status === "initiated" && r.amount === refundAmountPaise
-  );
-  if (duplicateRefund) {
-    throw ApiError.conflict("A refund for this amount is already in progress");
-  }
-
-  const refund = await issueRefund(
-    order.payment.razorpayPaymentId,
-    amount ? refundAmountPaise : undefined
-  );
-
-  // Record refund in history
-  order.payment.refunds.push({
-    refundId: refund.id,
-    amount: refundAmountPaise,
-    reason: reason || (amount ? `Partial refund: Rs ${amount}` : "Full refund"),
-    status: "initiated",
+  // Issue refund + record + (for full refunds) restock and reverse rewards.
+  const { refund } = await processOrderRefund(order, {
+    amount,
+    reason,
     initiatedBy: req.user._id,
   });
-
-  // Set intermediate status (webhook will finalize to "refunded")
-  order.status = "refund_initiated";
-  order.payment.status = "refund_initiated";
-
-  const isFullRefund = !amount || amount >= order.pricing.total;
-
-  order.adminNotes.push({
-    note: `Refund initiated: ${isFullRefund ? "Full refund" : `Rs ${amount}`}. Refund ID: ${refund.id}`,
-    addedBy: req.user._id,
-    addedAt: new Date(),
-  });
-
-  // Save immediately after refund so the record is persisted even if
-  // subsequent reversal operations fail.
-  await order.save();
-
-  // For full refund: restore stock, reverse coupons, reverse loyalty.
-  // These are best-effort: failures are logged but don't fail the refund.
-  if (isFullRefund) {
-    try {
-      for (const item of order.items) {
-        if (item.isFreeGift || !item.selectedSize) continue;
-        await Product.findOneAndUpdate(
-          { _id: item.product, "sizes.label": item.selectedSize },
-          { $inc: { "sizes.$.stock": item.quantity } }
-        );
-        await Product.updateOne(
-          { _id: item.product },
-          [{ $set: { totalStock: { $sum: "$sizes.stock" } } }]
-        );
-      }
-
-      if (order.pricing.couponCode) {
-        const coupon = await Coupon.findOne({ code: order.pricing.couponCode });
-        if (coupon) {
-          const idx = coupon.usedBy.findIndex(
-            (e) => e.user.toString() === order.user.toString()
-          );
-          if (idx !== -1) {
-            coupon.usedBy.splice(idx, 1);
-            coupon.usageCount = Math.max(0, coupon.usageCount - 1);
-            await coupon.save();
-          }
-        }
-      }
-
-      if (order.pricing.specialCouponDiscounts?.length > 0) {
-        for (const sp of order.pricing.specialCouponDiscounts) {
-          const promo = await SpecialCoupon.findById(sp.specialCouponId);
-          if (promo) {
-            const idx = promo.usedBy.findIndex(
-              (e) => e.user.toString() === order.user.toString()
-            );
-            if (idx !== -1) {
-              promo.usedBy.splice(idx, 1);
-              promo.usageCount = Math.max(0, promo.usageCount - 1);
-              await promo.save();
-            }
-          }
-        }
-      }
-
-      if (order.loyaltyPointsEarned > 0) {
-        await reversePoints(
-          order.user,
-          order.loyaltyPointsEarned,
-          order._id,
-          `Reversed ${order.loyaltyPointsEarned} points from refunded order ${order.orderId}`
-        );
-      }
-
-      // Restore any redeemed loyalty points
-      const redeemed = order.pricing?.loyaltyPointsRedeemed || 0;
-      if (redeemed > 0) {
-        await User.findByIdAndUpdate(order.user, {
-          $inc: { loyaltyPoints: redeemed },
-        });
-        await LoyaltyTransaction.create({
-          user: order.user,
-          type: "manual_adjustment",
-          points: redeemed,
-          order: order._id,
-          description: `Refunded ${redeemed} redeemed points from refunded order ${order.orderId}`,
-        });
-      }
-
-      // Reverse referral reward if this was the qualifying order
-      await reverseReferralReward(order._id);
-    } catch (reversalErr) {
-      console.error(`Reversal error for order ${order.orderId}:`, reversalErr.message);
-    }
-  }
 
   res.json(ApiResponse.ok({ order, refund }, "Refund initiated successfully"));
 });
@@ -348,6 +327,41 @@ const approveReturn = asyncHandler(async (req, res) => {
     addedBy: req.user._id,
     addedAt: new Date(),
   });
+
+  // On approval, create a Shiprocket reverse-pickup shipment (best-effort).
+  if (action === "approve") {
+    order.shipping = order.shipping || {};
+    if (!order.shipping.returnShipment?.shipmentId) {
+      try {
+        const ret = await createReturnOrder(order);
+        const rPayload = ret?.payload || ret;
+        order.shipping.returnShipment = {
+          shiprocketOrderId: String(rPayload.order_id ?? ""),
+          shipmentId: String(rPayload.shipment_id ?? ""),
+        };
+        if (rPayload.shipment_id) {
+          const awbRes = await assignAWB(String(rPayload.shipment_id));
+          const awbData = awbRes?.response?.data || awbRes;
+          order.shipping.returnShipment.awbNumber = awbData.awb_code || awbData.awb;
+          order.shipping.returnShipment.courierName = awbData.courier_name;
+          if (order.shipping.returnShipment.awbNumber) {
+            order.shipping.returnShipment.trackingUrl = `https://shiprocket.co/tracking/${order.shipping.returnShipment.awbNumber}`;
+          }
+        }
+        order.adminNotes.push({
+          note: `Return pickup created. AWB ${order.shipping.returnShipment.awbNumber || "pending"}`,
+          addedBy: req.user._id,
+          addedAt: new Date(),
+        });
+      } catch (err) {
+        order.adminNotes.push({
+          note: `Shiprocket return pickup failed: ${err.message}`,
+          addedBy: req.user._id,
+          addedAt: new Date(),
+        });
+      }
+    }
+  }
 
   await order.save();
 

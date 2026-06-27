@@ -10,7 +10,11 @@ const mongoose = require("mongoose");
  */
 const webhookEventSchema = new mongoose.Schema(
   {
+    // Globally-unique dedup key. For Razorpay it is the x-razorpay-event-id; for
+    // Shiprocket (which sends no event id) it is a synthetic key namespaced per
+    // source, e.g. `sr:<awb>:<statusId>:<timestamp>`.
     eventId: { type: String, required: true, unique: true },
+    source: { type: String, default: "razorpay" },
     event: { type: String },
     processedAt: { type: Date, default: Date.now },
   },

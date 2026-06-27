@@ -120,6 +120,13 @@ const createProduct = asyncHandler(async (req, res) => {
     productData.tabHighlights = JSON.parse(productData.tabHighlights);
   }
 
+  // Parse array fields if sent as JSON strings
+  for (const key of ["benefits", "skinType", "concerns"]) {
+    if (typeof productData[key] === "string") {
+      productData[key] = JSON.parse(productData[key]);
+    }
+  }
+
   const product = await Product.create(productData);
 
   res.status(201).json(ApiResponse.created(product, "Product created"));
@@ -163,6 +170,13 @@ const updateProduct = asyncHandler(async (req, res) => {
   // Parse tabHighlights if sent as JSON string
   if (typeof updateData.tabHighlights === "string") {
     updateData.tabHighlights = JSON.parse(updateData.tabHighlights);
+  }
+
+  // Parse array fields if sent as JSON strings
+  for (const key of ["benefits", "skinType", "concerns"]) {
+    if (typeof updateData[key] === "string") {
+      updateData[key] = JSON.parse(updateData[key]);
+    }
   }
 
   Object.assign(product, updateData);

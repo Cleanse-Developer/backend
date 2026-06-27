@@ -8,6 +8,8 @@ const ORDER_STATUSES = [
   "out_for_delivery",
   "delivered",
   "cancelled",
+  "rto_in_transit",
+  "rto_delivered",
   "return_requested",
   "return_approved",
   "returned",

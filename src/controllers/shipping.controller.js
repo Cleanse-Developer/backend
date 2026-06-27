@@ -6,16 +6,17 @@ const { resolveShippingConfig } = require("../services/pricing.service");
 const ShippingZone = require("../models/ShippingZone");
 
 const checkDelivery = asyncHandler(async (req, res) => {
-  const { pincode } = req.body;
+  const { pincode, cod, weight } = req.body;
 
   if (!pincode || !/^\d{6}$/.test(pincode)) {
     throw ApiError.badRequest("Valid 6-digit pincode is required");
   }
 
-  // Try shiprocket service first
+  // Try shiprocket service first. cod defaults to 1 (checks COD-serviceable
+  // couriers); pass cod:0 for a prepaid-only availability check.
   let result;
   try {
-    result = await checkServiceability(pincode);
+    result = await checkServiceability(pincode, weight || 0.5, cod === undefined ? 1 : cod ? 1 : 0);
   } catch (err) {
     // Fallback to ShippingZone model
     const zone = await ShippingZone.findOne({

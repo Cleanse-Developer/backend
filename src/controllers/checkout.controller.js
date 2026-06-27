@@ -414,6 +414,13 @@ const confirmCheckout = asyncHandler(async (req, res) => {
   // 5. Post-transaction actions (non-critical)
   await postOrderActions(order, session);
 
+  // Order summary over WhatsApp (best-effort; prepaid is confirmed on payment).
+  try {
+    await require("../services/whatsapp.service").sendOrderSummary(order);
+  } catch (err) {
+    console.error(`[WhatsApp] order summary failed for ${order.orderId}:`, err.message);
+  }
+
   res.status(201).json(
     ApiResponse.created({ order }, "Order placed successfully")
   );

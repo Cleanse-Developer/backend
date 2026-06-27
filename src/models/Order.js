@@ -114,10 +114,26 @@ const orderSchema = new mongoose.Schema(
     status: { type: String, enum: ORDER_STATUSES, default: "pending" },
     shipping: {
       shiprocketOrderId: { type: String },
+      shipmentId: { type: String },
       awbNumber: { type: String },
       courierName: { type: String },
       trackingUrl: { type: String },
+      labelUrl: { type: String },
+      manifestUrl: { type: String },
+      pickupScheduledDate: { type: Date },
       estimatedDelivery: { type: Date },
+      lastTrackingStatus: { type: String },
+      lastTrackingStatusId: { type: Number },
+      lastWebhookAt: { type: Date },
+      ndrAttempts: { type: Number, default: 0 },
+      isRTO: { type: Boolean, default: false },
+      returnShipment: {
+        shiprocketOrderId: { type: String },
+        shipmentId: { type: String },
+        awbNumber: { type: String },
+        courierName: { type: String },
+        trackingUrl: { type: String },
+      },
     },
     returnRequest: {
       requested: { type: Boolean, default: false },
@@ -139,6 +155,16 @@ const orderSchema = new mongoose.Schema(
     contactEmail: { type: String },
     contactPhone: { type: String },
     loyaltyPointsEarned: { type: Number, default: 0 },
+    // COD WhatsApp approval tracking. Present only on held COD orders.
+    // "awaiting" → confirmation sent, order on hold (no Shiprocket/loyalty yet);
+    // "confirmed" / "cancelled" set when the customer responds (webhook/admin).
+    codConfirmation: {
+      wamid: { type: String },
+      status: { type: String, enum: ["awaiting", "confirmed", "cancelled"] },
+      sentAt: { type: Date },
+      respondedAt: { type: Date },
+      error: { type: String },
+    },
   },
   { timestamps: true }
 );

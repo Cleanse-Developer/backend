@@ -63,6 +63,7 @@ const start = async () => {
   const agenda = require("./src/config/agenda");
   require("./src/jobs/expirePaymentSession");
   require("./src/jobs/loyaltyExpiry");
+  require("./src/jobs/createShiprocketOrder");
   await agenda.start();
 
   // Schedule daily cleanup job if not already scheduled

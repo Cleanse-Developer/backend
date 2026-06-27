@@ -43,6 +43,20 @@ const envSchema = Joi.object({
   SMTP_PASS: Joi.string().default(""),
   EMAIL_FROM: Joi.string().default("Cleanse Ayurveda <noreply@cleanse.com>"),
 
+  // WhatsApp BSP (slide.synquic.com). API key is secret — server-side only.
+  WHATSAPP_API_BASE: Joi.string().uri().default("https://slide.synquic.com/api/v1"),
+  WHATSAPP_API_KEY: Joi.string().allow("").default(""),
+  // Shared secret to authenticate slide's inbound webhook (button replies).
+  WHATSAPP_WEBHOOK_TOKEN: Joi.string().allow("").default(""),
+  // When true, COD orders are held (no Shiprocket/loyalty) until the customer
+  // approves via WhatsApp. Default off so COD keeps working until the inbound
+  // webhook (or admin fallback) is operational.
+  WHATSAPP_COD_HOLD: Joi.boolean().default(false),
+  // Template names + language (override without code changes as templates evolve).
+  WHATSAPP_TPL_ORDER_CONFIRM: Joi.string().default("order_confirmation_2"),
+  WHATSAPP_TPL_ORDER_SUMMARY: Joi.string().default("order_summary_1"),
+  WHATSAPP_TEMPLATE_LANG: Joi.string().default("en"),
+
   FRONTEND_URL: Joi.string().default("http://localhost:3000"),
   ADMIN_URL: Joi.string().default("http://localhost:5173"),
 }).unknown(true);

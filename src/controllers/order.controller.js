@@ -9,13 +9,12 @@ const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
-const { createOrderId } = require("../services/order.service");
+const { createOrderId, runCodPostActions } = require("../services/order.service");
+const whatsappService = require("../services/whatsapp.service");
+const env = require("../config/env");
 const { calculatePricing } = require("../services/pricing.service");
-const { awardPoints, reversePoints } = require("../services/loyalty.service");
-const {
-  processReferralReward,
-  reverseReferralReward,
-} = require("../services/referral.service");
+const { reversePoints } = require("../services/loyalty.service");
+const { reverseReferralReward } = require("../services/referral.service");
 const { enrichSpecialDiscounts } = require("../services/checkout.service");
 const { validateStock, reserveStock } = require("../services/stock.service");
 const razorpayService = require("../services/razorpay.service");
@@ -277,20 +276,33 @@ const placeOrder = asyncHandler(async (req, res) => {
     mongoSession.endSession();
   }
 
-  // Non-critical post-transaction: award loyalty points
-  await awardPoints(
-    req.user._id,
-    pricing.loyaltyPoints,
-    order._id,
-    `Earned ${pricing.loyaltyPoints} points from order ${orderId}`
-  );
-
-  // Non-critical: process referral reward (best-effort)
-  try {
-    await processReferralReward(order._id, req.user._id);
-  } catch (err) {
-    console.error("Referral reward error:", err.message);
+  // COD confirmation gate: when enabled, hold the order (no loyalty/referral/
+  // Shiprocket) and ask the customer to approve via WhatsApp. Those post-actions
+  // run on confirmation (order.service.confirmCodOrder). If the WhatsApp send
+  // fails, fall back to processing immediately so the order is never stuck.
+  if (env.WHATSAPP_COD_HOLD) {
+    order.codConfirmation = { status: "awaiting", sentAt: new Date() };
+    await order.save();
+    try {
+      const resp = await whatsappService.sendOrderConfirmation(order);
+      if (resp?.wamid) {
+        order.codConfirmation.wamid = resp.wamid;
+        await order.save();
+      }
+      return res
+        .status(201)
+        .json(ApiResponse.created({ order }, "Order placed — awaiting WhatsApp confirmation"));
+    } catch (err) {
+      console.error(`[COD] confirmation send failed for ${orderId}:`, err.message);
+      order.codConfirmation.status = "confirmed";
+      order.codConfirmation.error = err.message;
+      await order.save();
+      // fall through to normal post-actions below
+    }
   }
+
+  // Non-critical post-transaction: loyalty + referral + Shiprocket.
+  await runCodPostActions(order);
 
   res.status(201).json(ApiResponse.created({ order }, "Order placed successfully"));
 });

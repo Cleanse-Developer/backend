@@ -24,6 +24,7 @@ router.use("/dashboard", require("./dashboard.routes"));
 router.use("/settings", require("./settings.routes"));
 router.use("/tickets", require("./ticket.routes"));
 router.use("/shipping", require("./shipping.routes"));
+router.use("/shiprocket", require("./shiprocket.routes"));
 router.use("/bundles", require("./bundle.routes"));
 router.use("/cms", require("./cms.routes"));
 router.use("/spin-wheel", require("./spinWheel.routes"));
@@ -32,5 +33,6 @@ router.use("/special-coupons", require("./specialCoupon.routes"));
 router.use("/loyalty", require("./loyalty.routes"));
 router.use("/referrals", require("./referral.routes"));
 router.use("/reviews", require("./review.routes"));
+router.use("/whatsapp", require("./whatsapp.routes"));
 
 module.exports = router;

@@ -24,6 +24,7 @@ router.use("/referral", require("./referral.routes").publicRouter);
 
 // Public webhook route (must be before auth middleware)
 router.use("/payments/webhook", require("./payment.routes").webhookRouter);
+router.use("/whatsapp/webhook", require("./whatsapp.routes").webhookRouter);
 
 // Protected customer routes
 router.use("/checkout", auth, require("./checkout.routes"));

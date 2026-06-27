@@ -264,6 +264,10 @@ const postOrderActions = async (order, session) => {
   } catch (err) {
     console.error("Referral reward error:", err.message);
   }
+
+  // Queue adhoc Shiprocket order creation (best-effort, non-blocking).
+  const { scheduleShiprocketCreate } = require("../jobs/createShiprocketOrder");
+  await scheduleShiprocketCreate(order._id);
 };
 
 /**

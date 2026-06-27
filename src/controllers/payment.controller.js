@@ -333,6 +333,10 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     console.error("Referral reward error:", err.message);
   }
 
+  // Queue adhoc Shiprocket order creation (best-effort, non-blocking).
+  const { scheduleShiprocketCreate } = require("../jobs/createShiprocketOrder");
+  await scheduleShiprocketCreate(order._id);
+
   res.json(ApiResponse.created({ order }, "Order placed successfully"));
 });
 

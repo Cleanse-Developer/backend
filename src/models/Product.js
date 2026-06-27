@@ -3,10 +3,13 @@ const responsiveSources = require("./shared/responsiveSources");
 
 const productSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, trim: true, maxlength: 200 },
+    name: { type: String, required: true, trim: true },
     slug: { type: String, required: true, unique: true, lowercase: true },
-    description: { type: String, required: true, maxlength: 2000 },
-    shortDescription: { type: String, maxlength: 500 },
+    description: { type: String, required: true, maxlength: 5000 },
+    shortDescription: { type: String },
+    benefits: [{ type: String }],
+    skinType: [{ type: String }],
+    concerns: [{ type: String }],
     price: { type: Number, required: true, min: 0 },
     compareAtPrice: { type: Number },
     color: { type: String, trim: true },

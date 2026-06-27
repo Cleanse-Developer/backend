@@ -1,11 +1,40 @@
 const { shiprocketRequest } = require("../config/shiprocket");
 const ShippingZone = require("../models/ShippingZone");
 
-const checkServiceability = async (pincode, weight = 0.5) => {
+const PICKUP_PINCODE = () => process.env.SHIPROCKET_PICKUP_PINCODE || "110001";
+const PICKUP_LOCATION = () => process.env.SHIPROCKET_PICKUP_LOCATION || "Primary";
+const PKG = () => ({
+  length: Number(process.env.SHIPROCKET_PKG_LENGTH) || 20,
+  breadth: Number(process.env.SHIPROCKET_PKG_BREADTH) || 15,
+  height: Number(process.env.SHIPROCKET_PKG_HEIGHT) || 10,
+  weight: Number(process.env.SHIPROCKET_PKG_WEIGHT) || 0.5,
+});
+
+/**
+ * Normalize an Indian phone number to the bare 10 digits Shiprocket expects
+ * (strips +91 / 0 prefix, spaces, dashes). Returns the last 10 digits.
+ */
+const normalizePhone = (phone) => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+};
+
+/**
+ * Stable per-variant SKU. The Order item only carries `selectedSize`, which
+ * collides across products, so prefix with the product id to keep SKUs unique
+ * (needed for COD reconciliation and returns).
+ */
+const itemSku = (item) => {
+  const base = item.product ? String(item.product) : "PROD";
+  return item.selectedSize ? `${base}-${item.selectedSize}` : base;
+};
+
+const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
   try {
+    const codFlag = cod ? 1 : 0;
     const data = await shiprocketRequest(
       "GET",
-      `/courier/serviceability/?pickup_postcode=110001&delivery_postcode=${pincode}&weight=${weight}&cod=1`
+      `/courier/serviceability/?pickup_postcode=${PICKUP_PINCODE()}&delivery_postcode=${pincode}&weight=${weight}&cod=${codFlag}`
     );
 
     const couriers = data.data?.available_courier_companies || [];
@@ -22,6 +51,7 @@ const checkServiceability = async (pincode, weight = 0.5) => {
       available: true,
       estimatedDays: `${fastest.estimated_delivery_days}-${fastest.estimated_delivery_days + 2}`,
       couriers: couriers.map((c) => ({
+        courierId: c.courier_company_id,
         name: c.courier_name,
         rate: c.rate,
         estimatedDays: c.estimated_delivery_days,
@@ -62,51 +92,231 @@ const checkServiceability = async (pincode, weight = 0.5) => {
   }
 };
 
-const createShipment = async (orderData) => {
-  const payload = {
-    order_id: orderData.orderId,
+/**
+ * Build the create/adhoc-shaped payload from an Order. Shiprocket sums
+ * sub_total + the separate charge fields, so sub_total must be the ITEM
+ * subtotal (not the grand total) — for COD that sum is the cash collected.
+ */
+const buildOrderPayload = (order) => {
+  const pkg = PKG();
+  return {
+    order_id: order.orderId,
     order_date: new Date().toISOString().split("T")[0],
-    pickup_location: "Primary",
-    billing_customer_name: orderData.billingAddress.fullName,
+    pickup_location: PICKUP_LOCATION(),
+    billing_customer_name: order.billingAddress?.fullName || order.shippingAddress.fullName,
     billing_last_name: "",
-    billing_address: orderData.billingAddress.address1,
-    billing_address_2: orderData.billingAddress.address2 || "",
-    billing_city: orderData.billingAddress.city,
-    billing_pincode: orderData.billingAddress.pincode,
-    billing_state: orderData.billingAddress.state,
-    billing_country: orderData.billingAddress.country || "India",
-    billing_email: orderData.shippingAddress.email || "",
-    billing_phone: orderData.shippingAddress.phone,
-    shipping_is_billing: orderData.billingSameAsShipping ? 1 : 0,
-    shipping_customer_name: orderData.shippingAddress.fullName,
+    billing_address: order.billingAddress?.address1 || order.shippingAddress.address1,
+    billing_address_2: order.billingAddress?.address2 || order.shippingAddress.address2 || "",
+    billing_city: order.billingAddress?.city || order.shippingAddress.city,
+    billing_pincode: order.billingAddress?.pincode || order.shippingAddress.pincode,
+    billing_state: order.billingAddress?.state || order.shippingAddress.state,
+    billing_country: order.billingAddress?.country || "India",
+    billing_email: order.contactEmail || order.shippingAddress.email || "",
+    billing_phone: normalizePhone(order.contactPhone || order.shippingAddress.phone),
+    shipping_is_billing: order.billingSameAsShipping ? 1 : 0,
+    shipping_customer_name: order.shippingAddress.fullName,
     shipping_last_name: "",
-    shipping_address: orderData.shippingAddress.address1,
-    shipping_address_2: orderData.shippingAddress.address2 || "",
-    shipping_city: orderData.shippingAddress.city,
-    shipping_pincode: orderData.shippingAddress.pincode,
-    shipping_state: orderData.shippingAddress.state,
-    shipping_country: orderData.shippingAddress.country || "India",
-    shipping_email: orderData.shippingAddress.email || "",
-    shipping_phone: orderData.shippingAddress.phone,
-    order_items: orderData.items.map((item) => ({
+    shipping_address: order.shippingAddress.address1,
+    shipping_address_2: order.shippingAddress.address2 || "",
+    shipping_city: order.shippingAddress.city,
+    shipping_pincode: order.shippingAddress.pincode,
+    shipping_state: order.shippingAddress.state,
+    shipping_country: order.shippingAddress.country || "India",
+    shipping_email: order.shippingAddress.email || order.contactEmail || "",
+    shipping_phone: normalizePhone(order.shippingAddress.phone),
+    order_items: order.items.map((item) => ({
       name: item.name,
-      sku: item.selectedSize || "DEFAULT",
+      sku: itemSku(item),
       units: item.quantity,
       selling_price: item.price,
+      discount: 0,
     })),
-    payment_method: orderData.payment.method === "cod" ? "COD" : "Prepaid",
-    sub_total: orderData.pricing.total,
-    length: 20,
-    breadth: 15,
-    height: 10,
-    weight: 0.5,
+    payment_method: order.payment.method === "cod" ? "COD" : "Prepaid",
+    shipping_charges: order.pricing?.shippingCost || 0,
+    giftwrap_charges: order.pricing?.giftWrapCost || 0,
+    transaction_charges: 0,
+    total_discount:
+      (order.pricing?.tierDiscount || 0) +
+      (order.pricing?.couponDiscount || 0) +
+      (order.pricing?.bundleDiscountTotal || 0) +
+      (order.pricing?.loyaltyDiscount || 0) +
+      (order.pricing?.specialCouponDiscountTotal || 0),
+    sub_total: order.pricing?.subtotal ?? order.pricing?.total,
+    length: pkg.length,
+    breadth: pkg.breadth,
+    height: pkg.height,
+    weight: pkg.weight,
   };
+};
 
-  return shiprocketRequest("POST", "/orders/create/adhoc", payload);
+/**
+ * Preferred ship path: one wrapper call that creates the order, assigns an
+ * AWB, schedules pickup, and generates label + manifest. Returns the raw
+ * Shiprocket response (order_id, shipment_id, awb_code, courier_name, label
+ * and manifest urls).
+ */
+const shipForward = async (order, courierId) => {
+  const payload = {
+    ...buildOrderPayload(order),
+    request_pickup: 1,
+    print_label: 1,
+    generate_manifest: 1,
+  };
+  if (courierId) payload.courier_id = courierId;
+  return shiprocketRequest("POST", "/shipments/create/forward-shipment", payload);
+};
+
+/**
+ * Fallback: create the order only (no AWB). Returns order_id + shipment_id;
+ * awb_code is null until assignAWB is called.
+ */
+const createShipment = async (order) => {
+  return shiprocketRequest("POST", "/orders/create/adhoc", buildOrderPayload(order));
+};
+
+const assignAWB = async (shipmentId, courierId) => {
+  const body = { shipment_id: shipmentId };
+  if (courierId) body.courier_id = courierId;
+  return shiprocketRequest("POST", "/courier/assign/awb", body);
+};
+
+const requestPickup = async (shipmentIds) => {
+  return shiprocketRequest("POST", "/courier/generate/pickup", {
+    shipment_id: Array.isArray(shipmentIds) ? shipmentIds : [shipmentIds],
+  });
+};
+
+const generateLabel = async (shipmentIds) => {
+  return shiprocketRequest("POST", "/courier/generate/label", {
+    shipment_id: Array.isArray(shipmentIds) ? shipmentIds : [shipmentIds],
+  });
+};
+
+const generateManifest = async (shipmentIds) => {
+  return shiprocketRequest("POST", "/manifests/generate", {
+    shipment_id: Array.isArray(shipmentIds) ? shipmentIds : [shipmentIds],
+  });
+};
+
+const generateInvoice = async (orderIds) => {
+  return shiprocketRequest("POST", "/orders/print/invoice", {
+    ids: Array.isArray(orderIds) ? orderIds : [orderIds],
+  });
+};
+
+// Cancel an order that has not yet been assigned an AWB.
+const cancelOrder = async (ids) => {
+  return shiprocketRequest("POST", "/orders/cancel", {
+    ids: Array.isArray(ids) ? ids : [ids],
+  });
+};
+
+// Cancel a shipment that already has an AWB.
+const cancelShipment = async (awbs) => {
+  return shiprocketRequest("POST", "/orders/cancel/shipment/awbs", {
+    awbs: Array.isArray(awbs) ? awbs : [awbs],
+  });
+};
+
+/**
+ * Take an NDR action. action ∈ "re-attempt" | "fake-attempt" | "return".
+ * "return" forces an RTO.
+ */
+const ndrAction = async (awb, action, comments = "", phone) => {
+  const body = { action, comments };
+  if (phone) body.phone = normalizePhone(phone);
+  return shiprocketRequest("POST", `/ndr/${awb}/action`, body);
+};
+
+/**
+ * Create a reverse-pickup (customer return) shipment. pickup_* is the buyer's
+ * address (goods picked up there); shipping_* is our warehouse (destination).
+ */
+const createReturnOrder = async (order) => {
+  const pkg = PKG();
+  const buyer = order.shippingAddress;
+  return shiprocketRequest("POST", "/orders/create/return", {
+    order_id: `RET-${order.orderId}`,
+    order_date: new Date().toISOString().split("T")[0],
+    pickup_customer_name: buyer.fullName,
+    pickup_last_name: "",
+    pickup_address: buyer.address1,
+    pickup_address_2: buyer.address2 || "",
+    pickup_city: buyer.city,
+    pickup_state: buyer.state,
+    pickup_country: buyer.country || "India",
+    pickup_pincode: buyer.pincode,
+    pickup_email: buyer.email || order.contactEmail || "",
+    pickup_phone: normalizePhone(buyer.phone),
+    pickup_isd_code: "91",
+    shipping_customer_name: process.env.SHIPROCKET_PICKUP_NAME || "Warehouse",
+    shipping_last_name: "",
+    shipping_address: process.env.SHIPROCKET_PICKUP_ADDRESS || "",
+    shipping_address_2: "",
+    shipping_city: process.env.SHIPROCKET_PICKUP_CITY || "",
+    shipping_country: "India",
+    shipping_pincode: PICKUP_PINCODE(),
+    shipping_state: process.env.SHIPROCKET_PICKUP_STATE || "",
+    shipping_email: process.env.ADMIN_NOTIFY_EMAIL || "",
+    shipping_isd_code: "91",
+    shipping_phone: normalizePhone(process.env.SHIPROCKET_PICKUP_PHONE),
+    order_items: order.items.map((item) => ({
+      sku: itemSku(item),
+      name: item.name,
+      units: item.quantity,
+      selling_price: item.price,
+      discount: 0,
+    })),
+    payment_method: "PREPAID",
+    total_discount: 0,
+    sub_total: order.pricing?.subtotal ?? order.pricing?.total,
+    length: pkg.length,
+    breadth: pkg.breadth,
+    height: pkg.height,
+    weight: pkg.weight,
+  });
 };
 
 const trackShipment = async (awbCode) => {
   return shiprocketRequest("GET", `/courier/track/awb/${awbCode}`);
 };
 
-module.exports = { checkServiceability, createShipment, trackShipment };
+// ---- Account-level operations (for the admin Settings UI) ----
+
+const getPickupLocations = async () => {
+  return shiprocketRequest("GET", "/settings/company/pickup");
+};
+
+const addPickupLocation = async (data) => {
+  return shiprocketRequest("POST", "/settings/company/addpickup", data);
+};
+
+const listCouriers = async () => {
+  return shiprocketRequest("GET", "/courier/courierListWithCounts");
+};
+
+const getWalletBalance = async () => {
+  return shiprocketRequest("GET", "/account/details/wallet-balance");
+};
+
+module.exports = {
+  checkServiceability,
+  shipForward,
+  createShipment,
+  assignAWB,
+  requestPickup,
+  generateLabel,
+  generateManifest,
+  generateInvoice,
+  cancelOrder,
+  cancelShipment,
+  ndrAction,
+  createReturnOrder,
+  trackShipment,
+  getPickupLocations,
+  addPickupLocation,
+  listCouriers,
+  getWalletBalance,
+  normalizePhone,
+  itemSku,
+};
