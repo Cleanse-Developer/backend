@@ -176,9 +176,11 @@ const CMS_DEFAULTS = {
 
 // GET /api/settings/public
 const getPublicSettings = asyncHandler(async (req, res) => {
-  if (cachedSettings && Date.now() < cacheExpiresAt) {
-    return res.json(ApiResponse.ok(cachedSettings));
-  }
+  // TEMPORARY: in-memory cache disabled — always read fresh from DB.
+  // Re-enable by uncommenting this block (and the cache-write block below).
+  // if (cachedSettings && Date.now() < cacheExpiresAt) {
+  //   return res.json(ApiResponse.ok(cachedSettings));
+  // }
 
   const docs = await Settings.find({ key: { $in: PUBLIC_KEYS } }).lean();
 
@@ -242,9 +244,11 @@ const getPublicSettings = asyncHandler(async (req, res) => {
     result.cmsBento.featuredProducts = [];
   }
 
-  cachedSettings = result;
-  cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+  // TEMPORARY: cache-write disabled — see disabled cache-read block above.
+  // cachedSettings = result;
+  // cacheExpiresAt = Date.now() + CACHE_TTL_MS;
 
+  res.set("Cache-Control", "no-store"); // TEMPORARY: prevent downstream caching
   res.json(ApiResponse.ok(result, "Settings fetched successfully"));
 });
 
