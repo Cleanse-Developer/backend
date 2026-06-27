@@ -16,20 +16,26 @@ const PRODUCT_IMAGE_FOLDER = "cleanse-ayurveda/products";
 // become base images appended to any existing ones.
 async function applyProductImages(data, req, existingImages = []) {
   const fileMap = filesByFieldName(req.files);
+  const opts = { optimize: req.body.optimize === "true", uploadedBy: req.user?._id };
 
   let metadata;
   if (typeof data.images === "string") metadata = JSON.parse(data.images);
   else if (Array.isArray(data.images)) metadata = data.images;
 
   if (Array.isArray(metadata)) {
-    data.images = await resolveProductImages(metadata, fileMap, PRODUCT_IMAGE_FOLDER);
+    data.images = await resolveProductImages(metadata, fileMap, PRODUCT_IMAGE_FOLDER, opts);
     return;
   }
 
   const files = req.files || [];
   if (files.length > 0) {
     const uploads = await Promise.all(
-      files.map((f) => uploadImage(f.buffer, PRODUCT_IMAGE_FOLDER, f.mimetype))
+      files.map((f) =>
+        uploadImage(f.buffer, PRODUCT_IMAGE_FOLDER, f.mimetype, {
+          ...opts,
+          originalName: f.originalname,
+        })
+      )
     );
     const base = existingImages.length ? [...existingImages] : [];
     const newImages = uploads.map((img, i) => ({

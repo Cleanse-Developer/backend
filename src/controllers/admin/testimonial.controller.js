@@ -79,12 +79,16 @@ const createTestimonial = asyncHandler(async (req, res) => {
     isActive: isActive !== undefined ? isActive === "true" || isActive === true : true,
   };
 
+  const optimize = req.body.optimize === "true";
+  const uploadedBy = req.user?._id;
+
   // Handle image: file upload takes priority over URL string, per field independently
   if (req.files && req.files.beforeImage) {
     const uploaded = await uploadImage(
       req.files.beforeImage[0].buffer,
       TESTIMONIAL_IMAGE_FOLDER,
-      req.files.beforeImage[0].mimetype
+      req.files.beforeImage[0].mimetype,
+      { optimize, uploadedBy, originalName: req.files.beforeImage[0].originalname }
     );
     data.beforeImage = uploaded.url;
   } else if (beforeImage) {
@@ -95,7 +99,8 @@ const createTestimonial = asyncHandler(async (req, res) => {
     const uploaded = await uploadImage(
       req.files.afterImage[0].buffer,
       TESTIMONIAL_IMAGE_FOLDER,
-      req.files.afterImage[0].mimetype
+      req.files.afterImage[0].mimetype,
+      { optimize, uploadedBy, originalName: req.files.afterImage[0].originalname }
     );
     data.afterImage = uploaded.url;
   } else if (afterImage) {
@@ -107,13 +112,15 @@ const createTestimonial = asyncHandler(async (req, res) => {
     req.files,
     "beforeImage",
     parseSources(req.body.beforeImageSources),
-    TESTIMONIAL_IMAGE_FOLDER
+    TESTIMONIAL_IMAGE_FOLDER,
+    { optimize, uploadedBy }
   );
   data.afterImageSources = await buildSourcesFromFields(
     req.files,
     "afterImage",
     parseSources(req.body.afterImageSources),
-    TESTIMONIAL_IMAGE_FOLDER
+    TESTIMONIAL_IMAGE_FOLDER,
+    { optimize, uploadedBy }
   );
 
   const testimonial = await Testimonial.create(data);
@@ -144,12 +151,16 @@ const updateTestimonial = asyncHandler(async (req, res) => {
     updateData.isActive = updateData.isActive === "true" || updateData.isActive === true;
   }
 
+  const optimize = req.body.optimize === "true";
+  const uploadedBy = req.user?._id;
+
   // Handle image uploads — file upload takes priority over URL string per field
   if (req.files && req.files.beforeImage) {
     const uploaded = await uploadImage(
       req.files.beforeImage[0].buffer,
       TESTIMONIAL_IMAGE_FOLDER,
-      req.files.beforeImage[0].mimetype
+      req.files.beforeImage[0].mimetype,
+      { optimize, uploadedBy, originalName: req.files.beforeImage[0].originalname }
     );
     updateData.beforeImage = uploaded.url;
   }
@@ -159,7 +170,8 @@ const updateTestimonial = asyncHandler(async (req, res) => {
     const uploaded = await uploadImage(
       req.files.afterImage[0].buffer,
       TESTIMONIAL_IMAGE_FOLDER,
-      req.files.afterImage[0].mimetype
+      req.files.afterImage[0].mimetype,
+      { optimize, uploadedBy, originalName: req.files.afterImage[0].originalname }
     );
     updateData.afterImage = uploaded.url;
   }
@@ -175,7 +187,8 @@ const updateTestimonial = asyncHandler(async (req, res) => {
       req.files,
       "beforeImage",
       parseSources(updateData.beforeImageSources),
-      TESTIMONIAL_IMAGE_FOLDER
+      TESTIMONIAL_IMAGE_FOLDER,
+      { optimize, uploadedBy }
     );
   }
 
@@ -188,7 +201,8 @@ const updateTestimonial = asyncHandler(async (req, res) => {
       req.files,
       "afterImage",
       parseSources(updateData.afterImageSources),
-      TESTIMONIAL_IMAGE_FOLDER
+      TESTIMONIAL_IMAGE_FOLDER,
+      { optimize, uploadedBy }
     );
   }
 

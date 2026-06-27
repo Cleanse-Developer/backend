@@ -109,12 +109,16 @@ const createBlog = asyncHandler(async (req, res) => {
   };
 
   // Handle base image upload if file present
+  const optimize = req.body.optimize === "true";
+  const uploadedBy = req.user?._id;
+
   const baseImageFile = req.files?.image?.[0];
   if (baseImageFile) {
     const uploaded = await uploadImage(
       baseImageFile.buffer,
       BLOG_IMAGE_FOLDER,
-      baseImageFile.mimetype
+      baseImageFile.mimetype,
+      { optimize, uploadedBy, originalName: baseImageFile.originalname }
     );
     blogData.image = uploaded.url;
   } else if (image) {
@@ -126,7 +130,8 @@ const createBlog = asyncHandler(async (req, res) => {
     req.files,
     "image",
     parseSources(req.body.imageSources),
-    BLOG_IMAGE_FOLDER
+    BLOG_IMAGE_FOLDER,
+    { optimize, uploadedBy }
   );
 
   // Set author
@@ -156,6 +161,8 @@ const updateBlog = asyncHandler(async (req, res) => {
   }
 
   const updateData = { ...req.body };
+  const optimize = req.body.optimize === "true";
+  const uploadedBy = req.user?._id;
 
   // Handle base image upload
   const baseImageFile = req.files?.image?.[0];
@@ -163,7 +170,8 @@ const updateBlog = asyncHandler(async (req, res) => {
     const uploaded = await uploadImage(
       baseImageFile.buffer,
       BLOG_IMAGE_FOLDER,
-      baseImageFile.mimetype
+      baseImageFile.mimetype,
+      { optimize, uploadedBy, originalName: baseImageFile.originalname }
     );
     updateData.image = uploaded.url;
   }
@@ -176,7 +184,8 @@ const updateBlog = asyncHandler(async (req, res) => {
       req.files,
       "image",
       parseSources(updateData.imageSources),
-      BLOG_IMAGE_FOLDER
+      BLOG_IMAGE_FOLDER,
+      { optimize, uploadedBy }
     );
   }
 

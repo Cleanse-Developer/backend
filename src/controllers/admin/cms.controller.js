@@ -22,7 +22,11 @@ const uploadCmsImage = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No image file provided");
   }
 
-  const result = await uploadImage(req.file.buffer, "cleanse/cms", req.file.mimetype);
+  const result = await uploadImage(req.file.buffer, "cleanse/cms", req.file.mimetype, {
+    optimize: req.body.optimize === "true",
+    originalName: req.file.originalname,
+    uploadedBy: req.user?._id,
+  });
   res.json(ApiResponse.ok(result, "Image uploaded successfully"));
 });
 
@@ -32,7 +36,10 @@ const uploadCmsVideo = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No video file provided");
   }
 
-  const result = await uploadVideo(req.file.buffer, "cleanse/cms", req.file.mimetype);
+  const result = await uploadVideo(req.file.buffer, "cleanse/cms", req.file.mimetype, {
+    originalName: req.file.originalname,
+    uploadedBy: req.user?._id,
+  });
   res.json(ApiResponse.ok(result, "Video uploaded successfully"));
 });
 

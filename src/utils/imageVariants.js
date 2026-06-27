@@ -8,12 +8,15 @@ const fieldName = (prefix, bp) => prefix + bp.charAt(0).toUpperCase() + bp.slice
 // (object keyed by field name, each an array). `existing` is the parsed *Sources JSON
 // from the body holding kept/cleared URLs. Uploaded files win, then kept URLs; empties
 // dropped. Returns a sources object, or {} so callers can clear removed variants.
-async function buildSourcesFromFields(files, prefix, existing, folder) {
+async function buildSourcesFromFields(files, prefix, existing, folder, opts = {}) {
   const sources = {};
   for (const bp of BREAKPOINTS) {
     const file = files?.[fieldName(prefix, bp)]?.[0];
     if (file) {
-      const uploaded = await uploadImage(file.buffer, folder, file.mimetype);
+      const uploaded = await uploadImage(file.buffer, folder, file.mimetype, {
+        ...opts,
+        originalName: file.originalname,
+      });
       sources[bp] = uploaded.url;
     } else if (existing && existing[bp]) {
       sources[bp] = existing[bp];
@@ -24,13 +27,16 @@ async function buildSourcesFromFields(files, prefix, existing, folder) {
 
 // For the product gallery (upload.any() + metadata). `metadata` is the parsed `images`
 // array; `fileMap` maps a fileKey -> multer file. Each referenced file uploads once.
-async function resolveProductImages(metadata, fileMap, folder) {
+async function resolveProductImages(metadata, fileMap, folder, opts = {}) {
   const urlCache = {};
   const getUrl = async (fileKey) => {
     if (!fileKey || !fileMap[fileKey]) return null;
     if (urlCache[fileKey]) return urlCache[fileKey];
     const file = fileMap[fileKey];
-    const uploaded = await uploadImage(file.buffer, folder, file.mimetype);
+    const uploaded = await uploadImage(file.buffer, folder, file.mimetype, {
+      ...opts,
+      originalName: file.originalname,
+    });
     urlCache[fileKey] = uploaded.url;
     return uploaded.url;
   };

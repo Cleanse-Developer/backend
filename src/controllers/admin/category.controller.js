@@ -10,7 +10,11 @@ const { uploadImage } = require("../../services/upload.service");
 async function resolveBanner(req, field) {
   const file = req.files?.[field]?.[0];
   if (file) {
-    const uploaded = await uploadImage(file.buffer, "categories", file.mimetype);
+    const uploaded = await uploadImage(file.buffer, "categories", file.mimetype, {
+      optimize: req.body.optimize === "true",
+      originalName: file.originalname,
+      uploadedBy: req.user?._id,
+    });
     return uploaded.url;
   }
   if (typeof req.body[field] === "string") {
