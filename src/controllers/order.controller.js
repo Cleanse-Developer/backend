@@ -26,6 +26,16 @@ const POPULATE_PRODUCT = {
   select: "name slug price images tag sizes",
 };
 
+// Resolve a user's order by either its Mongo _id or its human-readable orderId.
+// The frontend sends order._id, while older clients/links may send the orderId.
+const findUserOrder = (param, userId) => {
+  const conditions = [{ orderId: param }];
+  if (mongoose.Types.ObjectId.isValid(param)) {
+    conditions.push({ _id: param });
+  }
+  return Order.findOne({ user: userId, $or: conditions });
+};
+
 // POST /api/orders — place order (COD only; Razorpay handled in payment controller)
 const placeOrder = asyncHandler(async (req, res) => {
   const {
@@ -324,7 +334,7 @@ const requestReturn = asyncHandler(async (req, res) => {
   const { reason } = req.body;
   const { orderId } = req.params;
 
-  const order = await Order.findOne({ orderId, user: req.user._id });
+  const order = await findUserOrder(orderId, req.user._id);
 
   if (!order) {
     throw ApiError.notFound("Order not found");
@@ -355,7 +365,7 @@ const requestReturn = asyncHandler(async (req, res) => {
 const reorder = asyncHandler(async (req, res) => {
   const { orderId } = req.params;
 
-  const order = await Order.findOne({ orderId, user: req.user._id });
+  const order = await findUserOrder(orderId, req.user._id);
 
   if (!order) {
     throw ApiError.notFound("Order not found");
@@ -396,7 +406,7 @@ const reorder = asyncHandler(async (req, res) => {
 const cancelOrder = asyncHandler(async (req, res) => {
   const { orderId } = req.params;
 
-  const order = await Order.findOne({ orderId, user: req.user._id });
+  const order = await findUserOrder(orderId, req.user._id);
 
   if (!order) {
     throw ApiError.notFound("Order not found");
