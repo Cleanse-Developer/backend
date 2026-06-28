@@ -147,7 +147,9 @@ const processOrderRefund = async (order, { amount, reason, initiatedBy = null } 
   const isFullRefund = !amount || amount >= order.pricing.total;
 
   order.adminNotes.push({
-    note: `Refund initiated: ${isFullRefund ? "Full refund" : `Rs ${amount}`}. Refund ID: ${refund.id}`,
+    note: `Refund started: ${isFullRefund ? "Full refund" : `Rs ${amount}`} (ref ${refund.id})`,
+    actor: initiatedBy ? "admin" : "system",
+    event: "refund:initiated",
     addedBy: initiatedBy,
     addedAt: new Date(),
   });

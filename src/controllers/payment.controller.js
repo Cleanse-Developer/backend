@@ -241,7 +241,23 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     contactEmail: shippingInfo.email,
     contactPhone: shippingInfo.phone,
     status: "confirmed",
+    confirmedAt: new Date(),
     loyaltyPointsEarned: pricing.loyaltyPoints,
+    adminNotes: [
+      {
+        actor: "customer",
+        event: "order:placed",
+        note: "Customer placed the order (paid online)",
+        addedBy: req.user._id,
+        addedAt: new Date(),
+      },
+      {
+        actor: "system",
+        event: "payment:paid",
+        note: "Payment received (Razorpay)",
+        addedAt: new Date(),
+      },
+    ],
   });
   } catch (orderErr) {
     // Compensate the loyalty redemption that we already committed

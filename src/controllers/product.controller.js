@@ -65,7 +65,10 @@ const listProducts = asyncHandler(async (req, res) => {
         sortOption = { name: -1 };
         break;
       case "featured":
-        sortOption = { isFeatured: -1, featuredOrder: 1, createdAt: -1 };
+        // Restrict to curated featured products (admin "Featured Products"),
+        // not just sort by it — otherwise non-featured products pad the list.
+        filter.isFeatured = true;
+        sortOption = { featuredOrder: 1, createdAt: -1 };
         break;
       case "newest":
         sortOption = { createdAt: -1 };

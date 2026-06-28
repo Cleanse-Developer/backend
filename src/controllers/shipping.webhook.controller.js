@@ -6,6 +6,10 @@ const { ndrAction } = require("../services/shiprocket.service");
 const { processOrderRefund, restockOrder } = require("../services/refund.service");
 const { sendEmail } = require("../services/email.service");
 const { getConfig } = require("../utils/shiprocketConfig");
+const { logActivity, ACTORS } = require("../utils/orderActivity");
+
+// Plain-language label for a courier status to show in the activity feed.
+const plainStatus = (s) => (s || "update").toString().toLowerCase();
 
 const constantTimeEqual = (a, b) => {
   const ab = Buffer.from(String(a || ""), "utf8");
@@ -22,21 +26,17 @@ const restockAndMaybeRefund = async (order, reason) => {
   if (isPrepaidPaid(order)) {
     try {
       await processOrderRefund(order, { reason, initiatedBy: null });
+      logActivity(order, { actor: ACTORS.SYSTEM, event: "refund:auto", note: "Stock restored and refund issued automatically" });
       return; // processOrderRefund already restocks on a full refund
     } catch (err) {
-      order.adminNotes.push({
-        note: `Auto-refund failed (${reason}): ${err.message}`,
-        addedAt: new Date(),
-      });
+      logActivity(order, { actor: ACTORS.SYSTEM, event: "refund:failed", note: `Auto-refund failed: ${err.message}` });
     }
   }
   try {
     await restockOrder(order);
+    logActivity(order, { actor: ACTORS.SYSTEM, event: "restock", note: "Stock restored" });
   } catch (err) {
-    order.adminNotes.push({
-      note: `Restock failed (${reason}): ${err.message}`,
-      addedAt: new Date(),
-    });
+    logActivity(order, { actor: ACTORS.SYSTEM, event: "restock:failed", note: `Restock failed: ${err.message}` });
   }
 };
 
@@ -63,18 +63,26 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
 
   const mapping = mapStatus(statusId);
   if (!mapping) {
-    order.adminNotes.push({
-      note: `Shiprocket tracking: unmapped status "${order.shipping.lastTrackingStatus}" (id ${statusId})`,
-      addedAt: new Date(),
+    logActivity(order, {
+      actor: ACTORS.COURIER,
+      event: "tracking:other",
+      note: `Courier update: ${plainStatus(order.shipping.lastTrackingStatus)}`,
     });
     await order.save();
     return;
   }
 
+  const courierLabel = plainStatus(order.shipping.lastTrackingStatus);
+
   switch (mapping.kind) {
     case "forward": {
       if (canAdvanceForward(order.status, mapping.status)) {
         order.status = mapping.status;
+        logActivity(order, {
+          actor: ACTORS.COURIER,
+          event: `tracking:${mapping.status}`,
+          note: `Courier update: ${courierLabel}`,
+        });
       }
       break;
     }
@@ -83,10 +91,12 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
       if (!TERMINAL.has(order.status) && order.status !== "delivered") {
         order.status = "delivered";
         order.deliveredAt = new Date();
+        logActivity(order, { actor: ACTORS.COURIER, event: "tracking:delivered", note: "Delivered to customer" });
       }
       // COD: cash collected on delivery → mark paid.
       if (order.payment.method === "cod" && order.payment.status !== "paid") {
         order.payment.status = "paid";
+        logActivity(order, { actor: ACTORS.SYSTEM, event: "payment:paid", note: "COD cash collected — payment marked paid" });
       }
       break;
     }
@@ -95,6 +105,7 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
       if (!TERMINAL.has(order.status) && order.status !== "delivered") {
         order.status = "cancelled";
         order.cancelledAt = new Date();
+        logActivity(order, { actor: ACTORS.COURIER, event: "tracking:cancelled", note: "Shipment cancelled by courier" });
       }
       break;
     }
@@ -102,17 +113,16 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
     case "ndr": {
       order.shipping.ndrAttempts = (order.shipping.ndrAttempts || 0) + 1;
       const action = order.shipping.ndrAttempts <= cfg.ndrMaxReattempts ? "re-attempt" : "return";
+      logActivity(order, { actor: ACTORS.COURIER, event: "tracking:ndr", note: `Delivery failed (attempt ${order.shipping.ndrAttempts})` });
       try {
         await ndrAction(awb, action, `Auto ${action} (NDR attempt ${order.shipping.ndrAttempts})`);
-        order.adminNotes.push({
-          note: `NDR attempt ${order.shipping.ndrAttempts}: ${action} requested`,
-          addedAt: new Date(),
+        logActivity(order, {
+          actor: ACTORS.SYSTEM,
+          event: `ndr:${action}`,
+          note: action === "return" ? "Asked courier to return the parcel (max retries reached)" : "Asked courier to re-attempt delivery",
         });
       } catch (err) {
-        order.adminNotes.push({
-          note: `NDR ${action} failed: ${err.message}`,
-          addedAt: new Date(),
-        });
+        logActivity(order, { actor: ACTORS.SYSTEM, event: "ndr:failed", note: `Auto ${action} failed: ${err.message}` });
       }
       break;
     }
@@ -121,6 +131,7 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
       order.shipping.isRTO = true;
       if (!TERMINAL.has(order.status) && order.status !== "rto_delivered") {
         order.status = "rto_in_transit";
+        logActivity(order, { actor: ACTORS.COURIER, event: "tracking:rto", note: "Parcel is coming back to us (return to origin)" });
       }
       break;
     }
@@ -128,30 +139,30 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
     case "rto_delivered": {
       order.shipping.isRTO = true;
       order.status = "rto_delivered";
+      logActivity(order, { actor: ACTORS.COURIER, event: "tracking:rto_delivered", note: "Returned parcel is back at the warehouse" });
       await restockAndMaybeRefund(order, `RTO delivered for ${order.orderId}`);
       break;
     }
 
     case "return": {
       // Reverse-pickup leg in progress — record only.
-      order.adminNotes.push({
-        note: `Return shipment update: ${order.shipping.lastTrackingStatus}`,
-        addedAt: new Date(),
-      });
+      logActivity(order, { actor: ACTORS.COURIER, event: "tracking:return", note: `Return shipment update: ${courierLabel}` });
       break;
     }
 
     case "return_delivered": {
       order.status = "returned";
       if (order.returnRequest) order.returnRequest.status = "completed";
+      logActivity(order, { actor: ACTORS.COURIER, event: "tracking:returned", note: "Returned item received back" });
       await restockAndMaybeRefund(order, `Return delivered for ${order.orderId}`);
       break;
     }
 
     case "exception": {
-      order.adminNotes.push({
-        note: `Shipment exception: ${order.shipping.lastTrackingStatus} (id ${statusId}) — manual review needed`,
-        addedAt: new Date(),
+      logActivity(order, {
+        actor: ACTORS.COURIER,
+        event: "tracking:exception",
+        note: `Problem reported: ${courierLabel} — needs manual review`,
       });
       try {
         if (cfg.adminNotifyEmail) {

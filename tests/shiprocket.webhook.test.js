@@ -155,6 +155,9 @@ const t = async (name, fn) => {
     assert.strictEqual(order.payment.status, "paid");
     assert.ok(order.saved);
     assert.strictEqual(state.created.length, 1); // dedup recorded
+    // attribution: a courier "delivered" entry + a system "COD paid" entry
+    assert.ok(order.adminNotes.some((n) => n.actor === "courier"));
+    assert.ok(order.adminNotes.some((n) => n.actor === "system" && n.event === "payment:paid"));
   });
 
   await t("out-of-order in_transit after delivered is ignored", async () => {

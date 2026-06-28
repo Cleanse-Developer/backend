@@ -18,6 +18,8 @@ const { reverseReferralReward } = require("../services/referral.service");
 const { enrichSpecialDiscounts } = require("../services/checkout.service");
 const { validateStock, reserveStock } = require("../services/stock.service");
 const { backfillUserProfile } = require("../services/profile.service");
+const { logActivity, ACTORS } = require("../utils/orderActivity");
+const { cancelOrder: cancelShiprocketOrder, cancelShipment: cancelShiprocketShipment } = require("../services/shiprocket.service");
 const razorpayService = require("../services/razorpay.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
@@ -179,6 +181,15 @@ const placeOrder = asyncHandler(async (req, res) => {
           contactPhone: shippingInfo.phone,
           status: "pending",
           loyaltyPointsEarned: pricing.loyaltyPoints,
+          adminNotes: [
+            {
+              actor: ACTORS.CUSTOMER,
+              event: "order:placed",
+              note: "Customer placed the order (Cash on Delivery)",
+              addedBy: req.user._id,
+              addedAt: new Date(),
+            },
+          ],
         },
       ],
       { session: mongoSession }
@@ -359,6 +370,12 @@ const requestReturn = asyncHandler(async (req, res) => {
     requestedAt: new Date(),
   };
   order.status = "return_requested";
+  logActivity(order, {
+    actor: ACTORS.CUSTOMER,
+    event: "return:requested",
+    note: `Customer requested a return${reason ? `: ${reason}` : ""}`,
+    by: req.user._id,
+  });
 
   await order.save();
 
@@ -424,6 +441,34 @@ const cancelOrder = asyncHandler(async (req, res) => {
   }
 
   order.status = "cancelled";
+  logActivity(order, {
+    actor: ACTORS.CUSTOMER,
+    event: "status:cancelled",
+    note: "Customer cancelled the order",
+    by: req.user._id,
+  });
+
+  // Cancel the Shiprocket shipment/order too (best-effort) so it doesn't linger.
+  try {
+    if (order.shipping?.awbNumber) {
+      await cancelShiprocketShipment([order.shipping.awbNumber]);
+    } else if (order.shipping?.shiprocketOrderId) {
+      await cancelShiprocketOrder([order.shipping.shiprocketOrderId]);
+    }
+    if (order.shipping?.shiprocketOrderId) {
+      logActivity(order, {
+        actor: ACTORS.SYSTEM,
+        event: "shiprocket:cancelled",
+        note: "Cancelled the Shiprocket shipment",
+      });
+    }
+  } catch (err) {
+    logActivity(order, {
+      actor: ACTORS.SYSTEM,
+      event: "shiprocket:cancel_failed",
+      note: `Could not cancel Shiprocket shipment: ${err.message}`,
+    });
+  }
 
   // Handle Razorpay refund if payment was captured
   if (

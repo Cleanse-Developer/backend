@@ -94,7 +94,20 @@ const createOrderFromSession = async (session, paymentDetails, mongoSession) => 
         contactEmail: session.shippingAddress.email,
         contactPhone: session.shippingAddress.phone,
         status: isRazorpay ? "confirmed" : "pending",
+        confirmedAt: isRazorpay ? new Date() : undefined,
         loyaltyPointsEarned: session.pricing.loyaltyPoints || 0,
+        adminNotes: [
+          {
+            actor: "customer",
+            event: "order:placed",
+            note: `Customer placed the order (${isRazorpay ? "paid online" : "Cash on Delivery"})`,
+            addedBy: session.user,
+            addedAt: new Date(),
+          },
+          ...(isRazorpay
+            ? [{ actor: "system", event: "payment:paid", note: "Payment received (Razorpay)", addedAt: new Date() }]
+            : []),
+        ],
       },
     ],
     { session: mongoSession }

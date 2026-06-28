@@ -15,8 +15,16 @@ const loadOrder = async (id) => {
   return order;
 };
 
+// Manual Shiprocket ops from the admin UI are overrides of otherwise-automatic
+// steps, so tag them actor=admin + isOverride.
 const adminNote = (order, text, by) =>
-  order.adminNotes.push({ note: text, addedBy: by, addedAt: new Date() });
+  order.adminNotes.push({
+    note: text,
+    actor: "admin",
+    isOverride: true,
+    addedBy: by,
+    addedAt: new Date(),
+  });
 
 // ---- Per-order operations ----
 

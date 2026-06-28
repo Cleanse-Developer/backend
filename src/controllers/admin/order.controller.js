@@ -35,8 +35,17 @@ const VALID_TRANSITIONS = {
   cancelled: ["refund_initiated"],
 };
 
-const note = (order, text, by, at = new Date()) => {
-  order.adminNotes.push({ note: text, addedBy: by, addedAt: at });
+// Admin-authored log line (default actor = admin). For system/courier-attributed
+// lines pass opts.actor. Keeps the legacy (order, text, by) call shape working.
+const note = (order, text, by, at = new Date(), opts = {}) => {
+  order.adminNotes.push({
+    note: text,
+    actor: opts.actor || "admin",
+    event: opts.event,
+    isOverride: opts.isOverride || false,
+    addedBy: by,
+    addedAt: at,
+  });
 };
 
 /**
@@ -74,12 +83,12 @@ const runShipPipeline = async (order, byUser, at) => {
         }
         if (order.shipping.awbNumber) {
           order.shipping.trackingUrl = `https://shiprocket.co/tracking/${order.shipping.awbNumber}`;
-          note(order, `Shipment created via Shiprocket. AWB ${order.shipping.awbNumber}`, byUser, at);
+          note(order, `Shipment created via Shiprocket. AWB ${order.shipping.awbNumber}`, byUser, at, { actor: "system" });
           return;
         }
       }
     } catch (err) {
-      note(order, `Shiprocket forward-shipment failed, falling back: ${err.message}`, byUser, at);
+      note(order, `Shiprocket forward-shipment failed, falling back: ${err.message}`, byUser, at, { actor: "system" });
     }
   }
 
@@ -91,7 +100,7 @@ const runShipPipeline = async (order, byUser, at) => {
       order.shipping.shipmentId = String(created.shipment_id ?? "");
     }
     if (!order.shipping.shipmentId) {
-      note(order, "Shiprocket create returned no shipment_id", byUser, at);
+      note(order, "Shiprocket create returned no shipment_id", byUser, at, { actor: "system" });
       return;
     }
 
@@ -104,22 +113,22 @@ const runShipPipeline = async (order, byUser, at) => {
     }
 
     await requestPickup([order.shipping.shipmentId]).catch((e) =>
-      note(order, `Pickup request failed: ${e.message}`, byUser, at)
+      note(order, `Pickup request failed: ${e.message}`, byUser, at, { actor: "system" })
     );
     await generateLabel([order.shipping.shipmentId])
       .then((l) => {
         if (l?.label_url) order.shipping.labelUrl = l.label_url;
       })
-      .catch((e) => note(order, `Label generation failed: ${e.message}`, byUser, at));
+      .catch((e) => note(order, `Label generation failed: ${e.message}`, byUser, at, { actor: "system" }));
     await generateManifest([order.shipping.shipmentId])
       .then((m) => {
         if (m?.manifest_url) order.shipping.manifestUrl = m.manifest_url;
       })
-      .catch((e) => note(order, `Manifest generation failed: ${e.message}`, byUser, at));
+      .catch((e) => note(order, `Manifest generation failed: ${e.message}`, byUser, at, { actor: "system" }));
 
-    note(order, `Shipment created (fallback). AWB ${order.shipping.awbNumber || "pending"}`, byUser, at);
+    note(order, `Shipment created (fallback). AWB ${order.shipping.awbNumber || "pending"}`, byUser, at, { actor: "system" });
   } catch (err) {
-    note(order, `Shiprocket shipment creation failed: ${err.message}`, byUser, at);
+    note(order, `Shiprocket shipment creation failed: ${err.message}`, byUser, at, { actor: "system" });
   }
 };
 
@@ -131,13 +140,13 @@ const cancelAtShiprocket = async (order, byUser, at) => {
   try {
     if (order.shipping?.awbNumber) {
       await cancelShipment([order.shipping.awbNumber]);
-      note(order, `Shiprocket shipment cancelled (AWB ${order.shipping.awbNumber})`, byUser, at);
+      note(order, `Shiprocket shipment cancelled (AWB ${order.shipping.awbNumber})`, byUser, at, { actor: "system" });
     } else if (order.shipping?.shiprocketOrderId) {
       await cancelOrder([order.shipping.shiprocketOrderId]);
-      note(order, `Shiprocket order cancelled (${order.shipping.shiprocketOrderId})`, byUser, at);
+      note(order, `Shiprocket order cancelled (${order.shipping.shiprocketOrderId})`, byUser, at, { actor: "system" });
     }
   } catch (err) {
-    note(order, `Shiprocket cancellation failed: ${err.message}`, byUser, at);
+    note(order, `Shiprocket cancellation failed: ${err.message}`, byUser, at, { actor: "system" });
   }
 };
 
@@ -256,6 +265,8 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     : `Status changed to "${status}"`;
   order.adminNotes.push({
     note: noteText,
+    actor: "admin",
+    event: `status:${status}`,
     addedBy: req.user._id,
     addedAt: now,
   });
@@ -322,6 +333,8 @@ const approveReturn = asyncHandler(async (req, res) => {
 
   order.adminNotes.push({
     note: `Return ${action}d${note ? `: ${note}` : ""}`,
+    actor: "admin",
+    event: `return:${action}`,
     addedBy: req.user._id,
     addedAt: new Date(),
   });
@@ -347,13 +360,17 @@ const approveReturn = asyncHandler(async (req, res) => {
           }
         }
         order.adminNotes.push({
-          note: `Return pickup created. AWB ${order.shipping.returnShipment.awbNumber || "pending"}`,
+          note: `Return pickup created. Tracking ${order.shipping.returnShipment.awbNumber || "pending"}`,
+          actor: "system",
+          event: "return:pickup_created",
           addedBy: req.user._id,
           addedAt: new Date(),
         });
       } catch (err) {
         order.adminNotes.push({
-          note: `Shiprocket return pickup failed: ${err.message}`,
+          note: `Return pickup could not be created: ${err.message}`,
+          actor: "system",
+          event: "return:pickup_failed",
           addedBy: req.user._id,
           addedAt: new Date(),
         });

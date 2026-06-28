@@ -1,6 +1,7 @@
 const agenda = require("../config/agenda");
 const Order = require("../models/Order");
 const { createShipment } = require("../services/shiprocket.service");
+const { logActivity, ACTORS } = require("../utils/orderActivity");
 
 const MAX_ATTEMPTS = 4;
 const RETRY_DELAY_MS = 5 * 60 * 1000; // 5 minutes
@@ -28,9 +29,10 @@ agenda.define("create-shiprocket-order", async (job) => {
     order.shipping = order.shipping || {};
     order.shipping.shiprocketOrderId = String(res.order_id ?? "");
     order.shipping.shipmentId = String(res.shipment_id ?? "");
-    order.adminNotes.push({
-      note: `Shiprocket order queued (id ${order.shipping.shiprocketOrderId}, shipment ${order.shipping.shipmentId})`,
-      addedAt: new Date(),
+    logActivity(order, {
+      actor: ACTORS.SYSTEM,
+      event: "shiprocket:registered",
+      note: "Sent to Shiprocket (ready to dispatch)",
     });
     await order.save();
   } catch (err) {
@@ -44,9 +46,10 @@ agenda.define("create-shiprocket-order", async (job) => {
         attempt: attempt + 1,
       });
     } else {
-      order.adminNotes.push({
-        note: `Shiprocket order creation failed after ${MAX_ATTEMPTS} attempts: ${err.message}. Use "Sync" in the Shipment tab to retry.`,
-        addedAt: new Date(),
+      logActivity(order, {
+        actor: ACTORS.SYSTEM,
+        event: "shiprocket:register_failed",
+        note: `Could not send to Shiprocket after ${MAX_ATTEMPTS} tries: ${err.message}. Use "Send to Shiprocket" on the order to retry.`,
       });
       await order.save();
     }

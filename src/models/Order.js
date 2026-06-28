@@ -145,9 +145,21 @@ const orderSchema = new mongoose.Schema(
       },
       requestedAt: { type: Date },
     },
+    // Unified activity log (rendered as the "Activity" feed). Every meaningful
+    // event from any participant is appended here with attribution.
+    // actor: who caused it — "customer" | "system" | "courier" | "admin".
+    // isOverride: an admin manually did something that normally happens
+    // automatically. Legacy entries (no actor) render as "admin".
     adminNotes: [
       {
         note: { type: String },
+        actor: {
+          type: String,
+          enum: ["customer", "system", "courier", "admin"],
+          default: "admin",
+        },
+        event: { type: String },
+        isOverride: { type: Boolean, default: false },
         addedBy: { type: mongoose.Schema.Types.ObjectId },
         addedAt: { type: Date, default: Date.now },
       },
