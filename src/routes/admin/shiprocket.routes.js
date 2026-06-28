@@ -14,4 +14,8 @@ router.post("/serviceability", srOps.serviceability);
 router.get("/mode", srOps.getMode);
 router.patch("/mode", srOps.setMode);
 
+// Operational config (pickup, warehouse, courier, NDR, package, alert email)
+router.get("/config", srOps.getConfig);
+router.patch("/config", srOps.setConfig);
+
 module.exports = router;

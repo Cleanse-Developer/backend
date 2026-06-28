@@ -42,6 +42,9 @@ stub("../services/refund.service", {
   restockOrder: async () => {},
 });
 stub("../services/email.service", { sendEmail: async () => ({}) });
+stub("../utils/shiprocketConfig", {
+  getConfig: async () => ({ ndrMaxReattempts: 2, adminNotifyEmail: "", warehouse: {}, pkg: {} }),
+});
 
 const { handleShiprocketTracking } = require("../src/controllers/shipping.webhook.controller");
 

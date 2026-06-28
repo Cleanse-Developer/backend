@@ -4,6 +4,7 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const { paginationMeta } = require("../../utils/pagination");
 const { processOrderRefund } = require("../../services/refund.service");
+const { getConfig: getShiprocketConfig } = require("../../utils/shiprocketConfig");
 const {
   shipForward,
   createShipment,
@@ -52,13 +53,13 @@ const runShipPipeline = async (order, byUser, at) => {
   // Idempotency: already fully shipped.
   if (order.shipping.awbNumber) return;
 
+  const cfg = await getShiprocketConfig();
+  const defaultCourierId = cfg.defaultCourierId || undefined;
+
   // Try the atomic wrapper first, unless we already have a shipment id.
   if (!order.shipping.shipmentId) {
     try {
-      const r = await shipForward(
-        order,
-        process.env.SHIPROCKET_DEFAULT_COURIER_ID
-      );
+      const r = await shipForward(order, defaultCourierId);
       const payload = r?.payload || r;
       if (payload?.shipment_id) {
         order.shipping.shiprocketOrderId = String(payload.order_id ?? "");
@@ -94,10 +95,7 @@ const runShipPipeline = async (order, byUser, at) => {
       return;
     }
 
-    const awbRes = await assignAWB(
-      order.shipping.shipmentId,
-      process.env.SHIPROCKET_DEFAULT_COURIER_ID
-    );
+    const awbRes = await assignAWB(order.shipping.shipmentId, defaultCourierId);
     const awbData = awbRes?.response?.data || awbRes;
     order.shipping.awbNumber = awbData.awb_code || awbData.awb;
     order.shipping.courierName = awbData.courier_name;

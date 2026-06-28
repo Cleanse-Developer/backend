@@ -5,8 +5,7 @@ const { mapStatus, canAdvanceForward, TERMINAL } = require("../utils/shiprocketS
 const { ndrAction } = require("../services/shiprocket.service");
 const { processOrderRefund, restockOrder } = require("../services/refund.service");
 const { sendEmail } = require("../services/email.service");
-
-const NDR_MAX = () => Number(process.env.SHIPROCKET_NDR_MAX_REATTEMPTS) || 2;
+const { getConfig } = require("../utils/shiprocketConfig");
 
 const constantTimeEqual = (a, b) => {
   const ab = Buffer.from(String(a || ""), "utf8");
@@ -60,6 +59,8 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
     if (!isNaN(etd)) order.shipping.estimatedDelivery = etd;
   }
 
+  const cfg = await getConfig();
+
   const mapping = mapStatus(statusId);
   if (!mapping) {
     order.adminNotes.push({
@@ -100,7 +101,7 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
 
     case "ndr": {
       order.shipping.ndrAttempts = (order.shipping.ndrAttempts || 0) + 1;
-      const action = order.shipping.ndrAttempts <= NDR_MAX() ? "re-attempt" : "return";
+      const action = order.shipping.ndrAttempts <= cfg.ndrMaxReattempts ? "re-attempt" : "return";
       try {
         await ndrAction(awb, action, `Auto ${action} (NDR attempt ${order.shipping.ndrAttempts})`);
         order.adminNotes.push({
@@ -153,9 +154,9 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
         addedAt: new Date(),
       });
       try {
-        if (process.env.ADMIN_NOTIFY_EMAIL) {
+        if (cfg.adminNotifyEmail) {
           await sendEmail({
-            to: process.env.ADMIN_NOTIFY_EMAIL,
+            to: cfg.adminNotifyEmail,
             subject: `Shipment exception — ${order.orderId}`,
             html: `<p>Order <strong>${order.orderId}</strong> (AWB ${awb}) reported status <strong>${order.shipping.lastTrackingStatus}</strong>. File a claim / refund manually.</p>`,
           });

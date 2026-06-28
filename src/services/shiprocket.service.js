@@ -1,19 +1,11 @@
 const { shiprocketRequest } = require("../config/shiprocket");
 const ShippingZone = require("../models/ShippingZone");
 const { isTestMode } = require("../utils/shiprocketMode");
+const { getConfig } = require("../utils/shiprocketConfig");
 
 // Short pseudo-random id for simulated (test-mode) responses.
 const rid = () =>
   Date.now().toString(36).slice(-5) + Math.floor(Math.random() * 1e6).toString(36);
-
-const PICKUP_PINCODE = () => process.env.SHIPROCKET_PICKUP_PINCODE || "110001";
-const PICKUP_LOCATION = () => process.env.SHIPROCKET_PICKUP_LOCATION || "Primary";
-const PKG = () => ({
-  length: Number(process.env.SHIPROCKET_PKG_LENGTH) || 20,
-  breadth: Number(process.env.SHIPROCKET_PKG_BREADTH) || 15,
-  height: Number(process.env.SHIPROCKET_PKG_HEIGHT) || 10,
-  weight: Number(process.env.SHIPROCKET_PKG_WEIGHT) || 0.5,
-});
 
 /**
  * Normalize an Indian phone number to the bare 10 digits Shiprocket expects
@@ -46,10 +38,11 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
     };
   }
   try {
+    const cfg = await getConfig();
     const codFlag = cod ? 1 : 0;
     const data = await shiprocketRequest(
       "GET",
-      `/courier/serviceability/?pickup_postcode=${PICKUP_PINCODE()}&delivery_postcode=${pincode}&weight=${weight}&cod=${codFlag}`
+      `/courier/serviceability/?pickup_postcode=${cfg.pickupPincode}&delivery_postcode=${pincode}&weight=${weight}&cod=${codFlag}`
     );
 
     const couriers = data.data?.available_courier_companies || [];
@@ -112,12 +105,12 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
  * sub_total + the separate charge fields, so sub_total must be the ITEM
  * subtotal (not the grand total) — for COD that sum is the cash collected.
  */
-const buildOrderPayload = (order) => {
-  const pkg = PKG();
+const buildOrderPayload = (order, cfg) => {
+  const pkg = cfg.pkg;
   return {
     order_id: order.orderId,
     order_date: new Date().toISOString().split("T")[0],
-    pickup_location: PICKUP_LOCATION(),
+    pickup_location: cfg.pickupLocation,
     billing_customer_name: order.billingAddress?.fullName || order.shippingAddress.fullName,
     billing_last_name: "",
     billing_address: order.billingAddress?.address1 || order.shippingAddress.address1,
@@ -186,8 +179,9 @@ const shipForward = async (order, courierId) => {
       },
     };
   }
+  const cfg = await getConfig();
   const payload = {
-    ...buildOrderPayload(order),
+    ...buildOrderPayload(order, cfg),
     request_pickup: 1,
     print_label: 1,
     generate_manifest: 1,
@@ -205,7 +199,8 @@ const createShipment = async (order) => {
     const id = rid();
     return { order_id: `TEST-${id}`, shipment_id: `TEST-${id}`, awb_code: "" };
   }
-  return shiprocketRequest("POST", "/orders/create/adhoc", buildOrderPayload(order));
+  const cfg = await getConfig();
+  return shiprocketRequest("POST", "/orders/create/adhoc", buildOrderPayload(order, cfg));
 };
 
 const assignAWB = async (shipmentId, courierId) => {
@@ -283,7 +278,9 @@ const createReturnOrder = async (order) => {
     const id = rid();
     return { order_id: `TEST-RET-${id}`, shipment_id: `TEST-${id}` };
   }
-  const pkg = PKG();
+  const cfg = await getConfig();
+  const pkg = cfg.pkg;
+  const wh = cfg.warehouse;
   const buyer = order.shippingAddress;
   return shiprocketRequest("POST", "/orders/create/return", {
     order_id: `RET-${order.orderId}`,
@@ -299,17 +296,17 @@ const createReturnOrder = async (order) => {
     pickup_email: buyer.email || order.contactEmail || "",
     pickup_phone: normalizePhone(buyer.phone),
     pickup_isd_code: "91",
-    shipping_customer_name: process.env.SHIPROCKET_PICKUP_NAME || "Warehouse",
+    shipping_customer_name: wh.name || "Warehouse",
     shipping_last_name: "",
-    shipping_address: process.env.SHIPROCKET_PICKUP_ADDRESS || "",
+    shipping_address: wh.address || "",
     shipping_address_2: "",
-    shipping_city: process.env.SHIPROCKET_PICKUP_CITY || "",
+    shipping_city: wh.city || "",
     shipping_country: "India",
-    shipping_pincode: PICKUP_PINCODE(),
-    shipping_state: process.env.SHIPROCKET_PICKUP_STATE || "",
-    shipping_email: process.env.ADMIN_NOTIFY_EMAIL || "",
+    shipping_pincode: cfg.pickupPincode,
+    shipping_state: wh.state || "",
+    shipping_email: cfg.adminNotifyEmail || "",
     shipping_isd_code: "91",
-    shipping_phone: normalizePhone(process.env.SHIPROCKET_PICKUP_PHONE),
+    shipping_phone: normalizePhone(wh.phone),
     order_items: order.items.map((item) => ({
       sku: itemSku(item),
       name: item.name,

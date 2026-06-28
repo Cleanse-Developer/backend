@@ -4,6 +4,7 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const sr = require("../../services/shiprocket.service");
 const shiprocketMode = require("../../utils/shiprocketMode");
+const shiprocketConfig = require("../../utils/shiprocketConfig");
 
 const TRACKING_URL = (awb) => `https://shiprocket.co/tracking/${awb}`;
 
@@ -232,6 +233,18 @@ const setMode = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ mode: saved }, `Shiprocket mode set to ${saved}`));
 });
 
+// GET /api/admin/shiprocket/config — operational config (pickup, warehouse, etc.)
+const getConfig = asyncHandler(async (req, res) => {
+  const config = await shiprocketConfig.getConfig();
+  res.json(ApiResponse.ok({ config }, "Shiprocket config"));
+});
+
+// PATCH /api/admin/shiprocket/config — update operational config
+const setConfig = asyncHandler(async (req, res) => {
+  const config = await shiprocketConfig.setConfig(req.body || {});
+  res.json(ApiResponse.ok({ config }, "Shiprocket config saved"));
+});
+
 module.exports = {
   // per-order
   syncOrder,
@@ -253,4 +266,6 @@ module.exports = {
   serviceability,
   getMode,
   setMode,
+  getConfig,
+  setConfig,
 };
