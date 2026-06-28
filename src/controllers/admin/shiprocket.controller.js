@@ -3,6 +3,7 @@ const asyncHandler = require("../../utils/asyncHandler");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const sr = require("../../services/shiprocket.service");
+const shiprocketMode = require("../../utils/shiprocketMode");
 
 const TRACKING_URL = (awb) => `https://shiprocket.co/tracking/${awb}`;
 
@@ -215,6 +216,22 @@ const serviceability = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ serviceability: r }, "Serviceability fetched"));
 });
 
+// GET /api/admin/shiprocket/mode
+const getMode = asyncHandler(async (req, res) => {
+  const mode = await shiprocketMode.getMode();
+  res.json(ApiResponse.ok({ mode }, "Shiprocket mode"));
+});
+
+// PATCH /api/admin/shiprocket/mode { mode: "live" | "test" }
+const setMode = asyncHandler(async (req, res) => {
+  const { mode } = req.body;
+  if (!["live", "test"].includes(mode)) {
+    throw ApiError.badRequest('mode must be "live" or "test"');
+  }
+  const saved = await shiprocketMode.setMode(mode);
+  res.json(ApiResponse.ok({ mode: saved }, `Shiprocket mode set to ${saved}`));
+});
+
 module.exports = {
   // per-order
   syncOrder,
@@ -234,4 +251,6 @@ module.exports = {
   couriers,
   wallet,
   serviceability,
+  getMode,
+  setMode,
 };

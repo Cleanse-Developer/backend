@@ -55,6 +55,7 @@ const envSchema = Joi.object({
   // Template names + language (override without code changes as templates evolve).
   WHATSAPP_TPL_ORDER_CONFIRM: Joi.string().default("order_confirmation_2"),
   WHATSAPP_TPL_ORDER_SUMMARY: Joi.string().default("order_summary_1"),
+  WHATSAPP_TPL_WELCOME: Joi.string().default("welcome_message"),
   WHATSAPP_TEMPLATE_LANG: Joi.string().default("en"),
 
   FRONTEND_URL: Joi.string().default("http://localhost:3000"),

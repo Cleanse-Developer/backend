@@ -6,6 +6,7 @@ const { sendOTPEmail } = require("../services/email.service");
 const { generateAccessToken, generateRefreshToken } = require("../utils/generateToken");
 const generateReferralCode = require("../utils/generateReferralCode");
 const { applyReferralAtSignup } = require("../services/referral.service");
+const whatsappService = require("../services/whatsapp.service");
 const { verifyAccessToken } = require("../services/msg91.service");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
@@ -54,7 +55,7 @@ async function issueTokens(user, req, res) {
 async function findOrCreateUserByPhone(localPhone, { countryCode, referralCode } = {}) {
   let user = await User.findOne({ phone: localPhone });
   if (user) {
-    return { user, referralApplied: null };
+    return { user, referralApplied: null, isNewUser: false };
   }
 
   user = await User.create({
@@ -68,7 +69,13 @@ async function findOrCreateUserByPhone(localPhone, { countryCode, referralCode }
   if (referralCode && referralCode.trim()) {
     referralApplied = await applyReferralAtSignup(user, referralCode.trim());
   }
-  return { user, referralApplied };
+
+  // Best-effort welcome message (fire-and-forget; never blocks signup).
+  whatsappService.sendWelcomeMessage(user).catch((err) =>
+    console.error(`[WhatsApp] welcome failed for ${user._id}:`, err.message)
+  );
+
+  return { user, referralApplied, isNewUser: true };
 }
 
 /** Update lastLogin, issue tokens, and send the standard login response. */
@@ -155,6 +162,11 @@ const register = asyncHandler(async (req, res) => {
     referralApplied = result;
   }
 
+  // Best-effort welcome message (fire-and-forget; never blocks signup).
+  whatsappService.sendWelcomeMessage(user).catch((err) =>
+    console.error(`[WhatsApp] welcome failed for ${user._id}:`, err.message)
+  );
+
   const accessToken = await issueTokens(user, req, res);
 
   res.status(201).json(
@@ -197,10 +209,12 @@ const verifyOtp = asyncHandler(async (req, res) => {
 
   let user;
   let referralApplied = null;
+  let isNewUser = false;
 
   if (identifier.includes("@")) {
     user = await User.findOne({ email: identifier });
     if (!user) {
+      isNewUser = true;
       user = await User.create({
         fullName: "User",
         email: identifier,
@@ -212,13 +226,13 @@ const verifyOtp = asyncHandler(async (req, res) => {
     }
   } else {
     const parsed = parsePhone(identifier);
-    ({ user, referralApplied } = await findOrCreateUserByPhone(extractLocalNumber(identifier), {
+    ({ user, referralApplied, isNewUser } = await findOrCreateUserByPhone(extractLocalNumber(identifier), {
       countryCode: parsed?.countryCode || DEFAULT_COUNTRY_CODE,
       referralCode,
     }));
   }
 
-  return loginUser(user, req, res, { referralApplied });
+  return loginUser(user, req, res, { referralApplied, isNewUser });
 });
 
 // ── POST /api/auth/verify-widget-token ───────────────────────────────────────
@@ -246,12 +260,12 @@ const verifyWidgetToken = asyncHandler(async (req, res) => {
   }
 
   const parsed = parsePhone(verifiedIdentifier);
-  const { user, referralApplied } = await findOrCreateUserByPhone(localPhone, {
+  const { user, referralApplied, isNewUser } = await findOrCreateUserByPhone(localPhone, {
     countryCode: parsed?.countryCode || DEFAULT_COUNTRY_CODE,
     referralCode,
   });
 
-  return loginUser(user, req, res, { referralApplied });
+  return loginUser(user, req, res, { referralApplied, isNewUser });
 });
 
 // ── POST /api/auth/refresh ───────────────────────────────────────────────────

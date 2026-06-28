@@ -55,6 +55,13 @@ const uploadImage = async (fileBuffer, folder, mimetype, opts = {}) => {
   }
   if (!dims.width) dims = await probe(buffer);
 
+  // When optimized to WebP, reflect that in the stored name (foo.png -> foo.webp)
+  // so the registry name matches the actual stored format.
+  const displayName =
+    optimized && opts.originalName
+      ? opts.originalName.replace(/\.[^.]+$/, "") + ".webp"
+      : opts.originalName;
+
   const result = await provider.uploadImage(buffer, folder, mime);
   await recordMedia(result, {
     folder,
@@ -64,7 +71,7 @@ const uploadImage = async (fileBuffer, folder, mimetype, opts = {}) => {
     bytes: buffer.length,
     width: dims.width,
     height: dims.height,
-    originalName: opts.originalName,
+    originalName: displayName,
     optimized,
     uploadedBy: opts.uploadedBy,
   });

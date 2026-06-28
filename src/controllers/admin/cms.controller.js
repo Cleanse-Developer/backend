@@ -6,6 +6,9 @@ const asyncHandler = require("../../utils/asyncHandler");
 const { invalidateSettingsCache } = require("../settings.controller");
 
 const CMS_KEYS = [
+  // Top promo/announcement bar — stored under the existing public "promoBanner"
+  // settings key so the storefront reads it with no extra wiring.
+  "promoBanner",
   "cmsHero",
   "cmsFormula",
   "cmsMarquee",
@@ -14,6 +17,8 @@ const CMS_KEYS = [
   "cmsPeelReveal",
   "cmsHeader",
   "cmsFooter",
+  "cmsTerms",
+  "cmsPrivacy",
 ];
 
 // POST /api/admin/cms/upload-image

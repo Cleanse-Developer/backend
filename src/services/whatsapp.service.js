@@ -44,6 +44,19 @@ const bodyComponent = (texts) => ({
 const customerName = (order) =>
   (order.shippingAddress?.fullName || "there").split(" ")[0] || "there";
 
+// First name from a User doc; "User" is the signup placeholder → greet generically.
+const userFirstName = (user) => {
+  const first = (user.fullName || "").trim().split(" ")[0];
+  return !first || first === "User" ? "there" : first;
+};
+
+// E.164 digits (no "+") from a User doc.
+const userWhatsAppNumber = (user) => {
+  const cc = String(user.countryCode || "+91").replace(/\D/g, "");
+  const local = extractLocalNumber(user.phone || "");
+  return `${cc}${local}`;
+};
+
 const deliveryEstimate = (order) => {
   const etd = order.shipping?.estimatedDelivery;
   if (etd) {
@@ -95,9 +108,25 @@ const sendOrderSummary = (order) =>
     ],
   });
 
+/**
+ * Welcome message for a new signup (template welcome_message).
+ * Body var: {{1}} name. No-op (returns null) if the user has no phone.
+ */
+const sendWelcomeMessage = (user) => {
+  if (!user?.phone) return Promise.resolve(null);
+  return sendTemplate({
+    to: userWhatsAppNumber(user),
+    templateName: env.WHATSAPP_TPL_WELCOME,
+    languageCode: LANG,
+    components: [bodyComponent([userFirstName(user)])],
+  });
+};
+
 module.exports = {
   toWhatsAppNumber,
+  userWhatsAppNumber,
   itemsSummary,
   sendOrderConfirmation,
   sendOrderSummary,
+  sendWelcomeMessage,
 };

@@ -17,6 +17,7 @@ const { reversePoints } = require("../services/loyalty.service");
 const { reverseReferralReward } = require("../services/referral.service");
 const { enrichSpecialDiscounts } = require("../services/checkout.service");
 const { validateStock, reserveStock } = require("../services/stock.service");
+const { backfillUserProfile } = require("../services/profile.service");
 const razorpayService = require("../services/razorpay.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
@@ -285,6 +286,9 @@ const placeOrder = asyncHandler(async (req, res) => {
   } finally {
     mongoSession.endSession();
   }
+
+  // Opportunistically complete a thin (OTP-created) profile from shipping info.
+  await backfillUserProfile(req.user._id, shippingInfo);
 
   // COD confirmation gate: when enabled, hold the order (no loyalty/referral/
   // Shiprocket) and ask the customer to approve via WhatsApp. Those post-actions

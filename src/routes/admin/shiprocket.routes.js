@@ -10,4 +10,8 @@ router.get("/couriers", srOps.couriers);
 router.get("/wallet", srOps.wallet);
 router.post("/serviceability", srOps.serviceability);
 
+// Live/Test mode toggle (Developer Options)
+router.get("/mode", srOps.getMode);
+router.patch("/mode", srOps.setMode);
+
 module.exports = router;

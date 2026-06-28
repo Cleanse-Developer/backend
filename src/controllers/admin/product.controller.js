@@ -104,6 +104,42 @@ const listProducts = asyncHandler(async (req, res) => {
   );
 });
 
+// GET /api/admin/products/featured
+// All featured products, in their saved display order (the same order the
+// storefront "Best Sellers" section renders).
+const listFeatured = asyncHandler(async (req, res) => {
+  const products = await Product.find({
+    isFeatured: true,
+    isDeleted: { $ne: true },
+  })
+    .sort({ featuredOrder: 1, createdAt: -1 })
+    .select("name slug price images featuredOrder isActive")
+    .lean();
+
+  res.json(ApiResponse.ok({ products }));
+});
+
+// PATCH /api/admin/products/featured/reorder
+// body: { ids: [productId, ...] } in the desired display order.
+const reorderFeatured = asyncHandler(async (req, res) => {
+  const { ids } = req.body;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw ApiError.badRequest("ids must be a non-empty array");
+  }
+
+  await Product.bulkWrite(
+    ids.map((id, index) => ({
+      updateOne: {
+        filter: { _id: id },
+        update: { $set: { featuredOrder: index } },
+      },
+    }))
+  );
+
+  res.json(ApiResponse.ok(null, "Featured order updated"));
+});
+
 // POST /api/admin/products
 const createProduct = asyncHandler(async (req, res) => {
   const productData = req.body;
@@ -221,6 +257,8 @@ const restoreProduct = asyncHandler(async (req, res) => {
 
 module.exports = {
   listProducts,
+  listFeatured,
+  reorderFeatured,
   createProduct,
   getProduct,
   updateProduct,

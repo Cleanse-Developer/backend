@@ -19,7 +19,7 @@ const SORT_MAP = {
 const listMedia = asyncHandler(async (req, res) => {
   const { page = 1, limit = 40, search, type, provider, sort = "newest" } = req.query;
 
-  const filter = {};
+  const filter = { hidden: { $ne: true } };
   if (type === "image" || type === "video") filter.resourceType = type;
   if (provider === "s3" || provider === "cloudinary") filter.provider = provider;
   if (search) {

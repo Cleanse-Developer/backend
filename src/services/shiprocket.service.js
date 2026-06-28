@@ -1,5 +1,10 @@
 const { shiprocketRequest } = require("../config/shiprocket");
 const ShippingZone = require("../models/ShippingZone");
+const { isTestMode } = require("../utils/shiprocketMode");
+
+// Short pseudo-random id for simulated (test-mode) responses.
+const rid = () =>
+  Date.now().toString(36).slice(-5) + Math.floor(Math.random() * 1e6).toString(36);
 
 const PICKUP_PINCODE = () => process.env.SHIPROCKET_PICKUP_PINCODE || "110001";
 const PICKUP_LOCATION = () => process.env.SHIPROCKET_PICKUP_LOCATION || "Primary";
@@ -30,6 +35,16 @@ const itemSku = (item) => {
 };
 
 const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
+  if (await isTestMode()) {
+    return {
+      available: true,
+      estimatedDays: "3-5",
+      couriers: [
+        { courierId: 1, name: "Test Courier (Surface)", rate: 50, estimatedDays: 3 },
+        { courierId: 2, name: "Test Courier (Air)", rate: 90, estimatedDays: 1 },
+      ],
+    };
+  }
   try {
     const codFlag = cod ? 1 : 0;
     const data = await shiprocketRequest(
@@ -156,6 +171,21 @@ const buildOrderPayload = (order) => {
  * and manifest urls).
  */
 const shipForward = async (order, courierId) => {
+  if (await isTestMode()) {
+    const id = rid();
+    return {
+      status: 1,
+      payload: {
+        order_id: `TEST-${id}`,
+        shipment_id: `TEST-${id}`,
+        awb_code: `TESTAWB${id}`,
+        courier_name: "Test Courier",
+        label_url: "https://example.com/test-label.pdf",
+        manifest_url: "https://example.com/test-manifest.pdf",
+        pickup_scheduled_date: new Date(Date.now() + 86400000).toISOString(),
+      },
+    };
+  }
   const payload = {
     ...buildOrderPayload(order),
     request_pickup: 1,
@@ -171,34 +201,47 @@ const shipForward = async (order, courierId) => {
  * awb_code is null until assignAWB is called.
  */
 const createShipment = async (order) => {
+  if (await isTestMode()) {
+    const id = rid();
+    return { order_id: `TEST-${id}`, shipment_id: `TEST-${id}`, awb_code: "" };
+  }
   return shiprocketRequest("POST", "/orders/create/adhoc", buildOrderPayload(order));
 };
 
 const assignAWB = async (shipmentId, courierId) => {
+  if (await isTestMode()) {
+    return { awb_code: `TESTAWB${rid()}`, courier_name: "Test Courier" };
+  }
   const body = { shipment_id: shipmentId };
   if (courierId) body.courier_id = courierId;
   return shiprocketRequest("POST", "/courier/assign/awb", body);
 };
 
 const requestPickup = async (shipmentIds) => {
+  if (await isTestMode()) {
+    return { pickup_scheduled_date: new Date(Date.now() + 86400000).toISOString() };
+  }
   return shiprocketRequest("POST", "/courier/generate/pickup", {
     shipment_id: Array.isArray(shipmentIds) ? shipmentIds : [shipmentIds],
   });
 };
 
 const generateLabel = async (shipmentIds) => {
+  if (await isTestMode()) return { label_url: "https://example.com/test-label.pdf" };
   return shiprocketRequest("POST", "/courier/generate/label", {
     shipment_id: Array.isArray(shipmentIds) ? shipmentIds : [shipmentIds],
   });
 };
 
 const generateManifest = async (shipmentIds) => {
+  if (await isTestMode()) return { manifest_url: "https://example.com/test-manifest.pdf" };
   return shiprocketRequest("POST", "/manifests/generate", {
     shipment_id: Array.isArray(shipmentIds) ? shipmentIds : [shipmentIds],
   });
 };
 
 const generateInvoice = async (orderIds) => {
+  if (await isTestMode()) return { invoice_url: "https://example.com/test-invoice.pdf" };
   return shiprocketRequest("POST", "/orders/print/invoice", {
     ids: Array.isArray(orderIds) ? orderIds : [orderIds],
   });
@@ -206,6 +249,7 @@ const generateInvoice = async (orderIds) => {
 
 // Cancel an order that has not yet been assigned an AWB.
 const cancelOrder = async (ids) => {
+  if (await isTestMode()) return { message: "Test mode: order cancellation simulated" };
   return shiprocketRequest("POST", "/orders/cancel", {
     ids: Array.isArray(ids) ? ids : [ids],
   });
@@ -213,6 +257,7 @@ const cancelOrder = async (ids) => {
 
 // Cancel a shipment that already has an AWB.
 const cancelShipment = async (awbs) => {
+  if (await isTestMode()) return { message: "Test mode: shipment cancellation simulated" };
   return shiprocketRequest("POST", "/orders/cancel/shipment/awbs", {
     awbs: Array.isArray(awbs) ? awbs : [awbs],
   });
@@ -223,6 +268,7 @@ const cancelShipment = async (awbs) => {
  * "return" forces an RTO.
  */
 const ndrAction = async (awb, action, comments = "", phone) => {
+  if (await isTestMode()) return { message: `Test mode: NDR "${action}" simulated` };
   const body = { action, comments };
   if (phone) body.phone = normalizePhone(phone);
   return shiprocketRequest("POST", `/ndr/${awb}/action`, body);
@@ -233,6 +279,10 @@ const ndrAction = async (awb, action, comments = "", phone) => {
  * address (goods picked up there); shipping_* is our warehouse (destination).
  */
 const createReturnOrder = async (order) => {
+  if (await isTestMode()) {
+    const id = rid();
+    return { order_id: `TEST-RET-${id}`, shipment_id: `TEST-${id}` };
+  }
   const pkg = PKG();
   const buyer = order.shippingAddress;
   return shiprocketRequest("POST", "/orders/create/return", {
@@ -278,24 +328,47 @@ const createReturnOrder = async (order) => {
 };
 
 const trackShipment = async (awbCode) => {
+  if (await isTestMode()) {
+    return {
+      tracking_data: {
+        shipment_track_activities: [
+          { activity: "Test mode — no live tracking", location: "Test Hub", date: new Date().toISOString() },
+        ],
+      },
+    };
+  }
   return shiprocketRequest("GET", `/courier/track/awb/${awbCode}`);
 };
 
 // ---- Account-level operations (for the admin Settings UI) ----
 
 const getPickupLocations = async () => {
+  if (await isTestMode()) {
+    return {
+      data: {
+        shipping_address: [
+          { pickup_location: "Primary (test)", city: "Test", state: "Test", pin_code: "110002", is_primary_location: 1, status: 2 },
+        ],
+      },
+    };
+  }
   return shiprocketRequest("GET", "/settings/company/pickup");
 };
 
 const addPickupLocation = async (data) => {
+  if (await isTestMode()) return { success: true, message: "Test mode: pickup add simulated" };
   return shiprocketRequest("POST", "/settings/company/addpickup", data);
 };
 
 const listCouriers = async () => {
+  if (await isTestMode()) {
+    return { courier_data: [{ id: 1, name: "Test Courier" }] };
+  }
   return shiprocketRequest("GET", "/courier/courierListWithCounts");
 };
 
 const getWalletBalance = async () => {
+  if (await isTestMode()) return { data: { balance_amount: "0" } };
   return shiprocketRequest("GET", "/account/details/wallet-balance");
 };
 

@@ -2,12 +2,19 @@ const Settings = require("../models/Settings");
 
 const settings = [
   {
-    key: "discount_tiers",
-    value: [
-      { threshold: 3500, percent: 15, label: "15% OFF" },
-      { threshold: 2000, percent: 10, label: "10% OFF" },
-      { threshold: 500, percent: 5, label: "5% OFF" },
-    ],
+    // Admin-managed cart tier discounts (read by pricing.service getDiscountTierConfig).
+    // `percent` tiers = % off subtotal; one `free_shipping` tier marks the
+    // free-shipping threshold. enabled:false turns the whole feature off.
+    key: "discount_tier_config",
+    value: {
+      enabled: true,
+      tiers: [
+        { threshold: 500, type: "percent", percent: 5, label: "5% OFF" },
+        { threshold: 1200, type: "free_shipping", label: "Free Shipping" },
+        { threshold: 2000, type: "percent", percent: 10, label: "10% OFF" },
+        { threshold: 3500, type: "percent", percent: 15, label: "15% OFF" },
+      ],
+    },
   },
   {
     key: "shipping_free_threshold",
@@ -77,6 +84,8 @@ const seedSettings = async () => {
   for (const s of settings) {
     await Settings.findOneAndUpdate({ key: s.key }, s, { upsert: true });
   }
+  // Remove legacy/orphaned tier keys replaced by discount_tier_config
+  await Settings.deleteMany({ key: { $in: ["discount_tiers", "DISCOUNT_TIERS"] } });
   console.log(`  ✓ ${settings.length} settings seeded`);
 };
 

@@ -9,7 +9,7 @@
     "seed": "node src/seeds/index.js",
     "seed:reset": "node src/seeds/index.js --reset",
     "test:api": "node tests/api-test.js",
-    "test:shiprocket": "node tests/shiprocket.test.js && node tests/shiprocket.webhook.test.js && node tests/shiprocket.job.test.js"
+    "test:shiprocket": "node tests/shiprocket.test.js && node tests/shiprocket.webhook.test.js && node tests/shiprocket.job.test.js && node tests/shiprocket.testmode.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",

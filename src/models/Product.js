@@ -57,6 +57,9 @@ const productSchema = new mongoose.Schema(
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date, default: null },
     isFeatured: { type: Boolean, default: false },
+    // Manual ordering for the storefront "Best Sellers" (featured) section.
+    // Lower = shown first. Only meaningful when isFeatured is true.
+    featuredOrder: { type: Number, default: 0 },
     isBundleable: { type: Boolean, default: false },
     seo: {
       metaTitle: { type: String },
@@ -71,7 +74,7 @@ const productSchema = new mongoose.Schema(
 productSchema.index({ tag: 1, isActive: 1 });
 productSchema.index({ price: 1 });
 productSchema.index({ name: "text", description: "text" });
-productSchema.index({ isActive: 1, isFeatured: 1 });
+productSchema.index({ isActive: 1, isFeatured: 1, featuredOrder: 1 });
 productSchema.index({ isActive: 1, isBundleable: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ createdAt: -1 });

@@ -26,11 +26,15 @@ const DEFAULT_COUNTRY_CODE = "+91";
 function extractLocalNumber(raw) {
   if (!raw) return "";
   let s = String(raw).replace(/[\s\-().]/g, "");
-  if (s.startsWith("+91")) return s.slice(3).replace(/\D/g, "");
-  if (s.startsWith("0091")) return s.slice(4).replace(/\D/g, "");
-  // "91XXXXXXXXXX" – exactly 12 digits starting with 91
-  if (/^91\d{10}$/.test(s)) return s.slice(2);
-  return s.replace(/\D/g, "");
+  let digits;
+  if (s.startsWith("+91")) digits = s.slice(3);
+  else if (s.startsWith("0091")) digits = s.slice(4);
+  else digits = s;
+  digits = digits.replace(/\D/g, "");
+  // Indian local numbers are 10 digits. Strip any leftover/duplicated leading
+  // country code (e.g. "919179621765" or "9191..." from a double-prefix).
+  if (digits.length > 10) digits = digits.slice(-10);
+  return digits;
 }
 
 /**
@@ -47,9 +51,13 @@ function parsePhone(raw, defaultCountryCode = DEFAULT_COUNTRY_CODE) {
   const s = String(raw).replace(/[\s\-().]/g, "");
 
   if (s.startsWith("+")) {
-    // Check +91 first — prevent greedy \d{1,3} from consuming "919" instead of "91"
-    if (s.startsWith("+91") && /^[6-9]\d{9}$/.test(s.slice(3))) {
-      return { countryCode: "+91", number: s.slice(3) };
+    // Check +91 first — prevent greedy \d{1,3} from consuming "919" instead of
+    // "91". Take the last 10 digits so a double-prefixed "+91919..." normalizes
+    // to the real local number instead of eating a digit.
+    if (s.startsWith("+91")) {
+      let n = s.slice(3).replace(/\D/g, "");
+      if (n.length > 10) n = n.slice(-10);
+      return { countryCode: "+91", number: n };
     }
     const match = s.match(/^\+(\d{1,3})(\d+)$/);
     if (match) return { countryCode: "+" + match[1], number: match[2] };

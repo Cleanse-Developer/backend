@@ -268,6 +268,10 @@ const postOrderActions = async (order, session) => {
   // Queue adhoc Shiprocket order creation (best-effort, non-blocking).
   const { scheduleShiprocketCreate } = require("../jobs/createShiprocketOrder");
   await scheduleShiprocketCreate(order._id);
+
+  // Opportunistically complete a thin (OTP-created) profile from shipping info.
+  const { backfillUserProfile } = require("./profile.service");
+  await backfillUserProfile(session.user, order.shippingAddress);
 };
 
 /**

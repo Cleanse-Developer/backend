@@ -1,6 +1,7 @@
 const Bundle = require("../models/Bundle");
 const User = require("../models/User");
 const ShippingZone = require("../models/ShippingZone");
+const Settings = require("../models/Settings");
 const { validateCoupon } = require("./coupon.service");
 const { resolvePromotions } = require("./promotionResolver.service");
 const {
@@ -12,6 +13,47 @@ const {
   SHIPPING,
   GIFT_WRAP_COST,
 } = require("../utils/constants");
+
+/**
+ * Default cart-tier-discount config, built from the hardcoded constants.
+ * Used as the fallback when no `discount_tier_config` setting exists in the DB.
+ * Percent tiers come from DISCOUNT_TIERS; the free-shipping milestone comes from
+ * SHIPPING.FREE_THRESHOLD.
+ */
+const DEFAULT_TIER_CONFIG = {
+  enabled: true,
+  tiers: [
+    ...DISCOUNT_TIERS.map((t) => ({
+      threshold: t.threshold,
+      type: "percent",
+      percent: t.percent,
+      label: t.label,
+    })),
+    {
+      threshold: SHIPPING.FREE_THRESHOLD,
+      type: "free_shipping",
+      label: "Free Shipping",
+    },
+  ],
+};
+
+/**
+ * Read the admin-managed cart-tier-discount config from the Settings collection.
+ * Falls back to DEFAULT_TIER_CONFIG (derived from constants) when unset/invalid.
+ * Read fresh on every call (matches getLoyaltyConfig); admin saves are infrequent.
+ *
+ * @returns {Promise<{ enabled: boolean, tiers: Array<{threshold:number, type:string, percent?:number, label:string}> }>}
+ */
+const getDiscountTierConfig = async () => {
+  const doc = await Settings.findOne({ key: "discount_tier_config" }).lean();
+  if (!doc?.value || !Array.isArray(doc.value.tiers)) {
+    return DEFAULT_TIER_CONFIG;
+  }
+  return {
+    enabled: doc.value.enabled !== false,
+    tiers: doc.value.tiers,
+  };
+};
 
 /**
  * Detect which cart items qualify for bundle discounts.
@@ -163,9 +205,15 @@ const calculateBundleDiscounts = async (cartItems) => {
  *   4. SHIPPING constants
  *
  * @param {{ pincode?: string, state?: string } | null} location
+ * @param {number} defaultFreeAbove - Free-shipping threshold to use when no zone
+ *   override exists. Defaults to the SHIPPING constant, but callers (pricing) pass
+ *   the admin-configured free_shipping tier threshold so the two stay in sync.
  * @returns {Promise<{ standardRate: number, freeAbove: number }>}
  */
-const resolveShippingConfig = async (location = null) => {
+const resolveShippingConfig = async (
+  location = null,
+  defaultFreeAbove = SHIPPING.FREE_THRESHOLD
+) => {
   const zones = await ShippingZone.find({ isActive: true })
     .select("pincodes states rates")
     .lean();
@@ -173,7 +221,7 @@ const resolveShippingConfig = async (location = null) => {
   if (!zones.length) {
     return {
       standardRate: SHIPPING.STANDARD_RATE,
-      freeAbove: SHIPPING.FREE_THRESHOLD,
+      freeAbove: defaultFreeAbove,
     };
   }
 
@@ -190,7 +238,7 @@ const resolveShippingConfig = async (location = null) => {
 
   return {
     standardRate: zone.rates?.standard ?? SHIPPING.STANDARD_RATE,
-    freeAbove: zone.rates?.freeAbove ?? SHIPPING.FREE_THRESHOLD,
+    freeAbove: zone.rates?.freeAbove ?? defaultFreeAbove,
   };
 };
 
@@ -236,17 +284,26 @@ const calculatePricing = async (
     await calculateBundleDiscounts(cart.items);
 
   // 3. Find applicable tier discount (highest qualifying tier)
-  // Tier is based on original subtotal
+  // Tiers are admin-managed (Settings: discount_tier_config); fall back to
+  // constants when unset. Tier is based on original subtotal.
+  const tierCfg = await getDiscountTierConfig();
+
   let tierDiscount = 0;
   let tierPercent = 0;
   let tierLabel = null;
 
-  for (const tier of DISCOUNT_TIERS) {
-    if (subtotal >= tier.threshold) {
-      tierPercent = tier.percent;
-      tierLabel = tier.label;
-      tierDiscount = Math.round((subtotal * tier.percent) / 100);
-      break; // DISCOUNT_TIERS is sorted descending by threshold
+  if (tierCfg.enabled) {
+    const percentTiers = tierCfg.tiers
+      .filter((t) => t.type === "percent" && Number(t.percent) > 0)
+      .sort((a, b) => b.threshold - a.threshold); // descending
+
+    for (const tier of percentTiers) {
+      if (subtotal >= tier.threshold) {
+        tierPercent = tier.percent;
+        tierLabel = tier.label;
+        tierDiscount = Math.round((subtotal * tier.percent) / 100);
+        break;
+      }
     }
   }
 
@@ -254,9 +311,18 @@ const calculatePricing = async (
   // Effective subtotal after bundles + tier
   const effectiveAfterBundleTier = Math.max(0, subtotal - bundleDiscountTotal - tierDiscount);
 
-  // Shipping cost (base, before any adjustments) — rate + free threshold come
-  // from the admin-configured ShippingZone, not the hardcoded constants.
-  const { standardRate, freeAbove } = await resolveShippingConfig(shippingLocation);
+  // Shipping cost (base, before any adjustments) — rate comes from the
+  // admin-configured ShippingZone; the default free-shipping threshold comes from
+  // the free_shipping tier (when tiers enabled), so the tier bar and actual free
+  // shipping stay in sync. A matched zone's freeAbove still overrides.
+  const freeShipTier = tierCfg.enabled
+    ? tierCfg.tiers.find((t) => t.type === "free_shipping")
+    : null;
+  const defaultFreeAbove = freeShipTier?.threshold ?? SHIPPING.FREE_THRESHOLD;
+  const { standardRate, freeAbove } = await resolveShippingConfig(
+    shippingLocation,
+    defaultFreeAbove
+  );
   const baseShippingCost = subtotal >= freeAbove ? 0 : standardRate;
 
   const promotionResult = await resolvePromotions(
@@ -376,8 +442,8 @@ const calculatePricing = async (
   const earnRate = loyaltyConfig?.earnRatePerRupee ?? 0.1;
   const loyaltyPoints = Math.floor(total * earnRate);
 
-  // 10. Tier progress info for the UI progress bar
-  const tierProgress = calculateTierProgress(subtotal, freeAbove);
+  // 10. Tier progress info for the UI progress bar (null when tiers disabled)
+  const tierProgress = calculateTierProgress(subtotal, tierCfg);
 
   return {
     subtotal,
@@ -405,57 +471,57 @@ const calculatePricing = async (
 };
 
 /**
- * Calculate tier progress for UI display (progress bar in cart).
- * Shows current tier, next tier, and how much more to spend.
+ * Build render-ready tier-progress for the storefront cart progress bar.
+ * Returns null when tiers are disabled or none are configured (bar hidden).
+ *
+ * @param {number} subtotal
+ * @param {{ enabled: boolean, tiers: Array }} tierCfg
+ * @returns {null | {
+ *   enabled: true,
+ *   milestones: Array<{ threshold:number, label:string, type:string, percent:number|null, reached:boolean }>,
+ *   nextMilestone: { threshold:number, label:string, type:string, amountAway:number } | null,
+ *   currentLabel: string | null,
+ *   fillPercent: number,
+ * }}
  */
-const calculateTierProgress = (subtotal, freeShippingThreshold = SHIPPING.FREE_THRESHOLD) => {
-  const tiers = [...DISCOUNT_TIERS].reverse(); // ascending order for progress
+const calculateTierProgress = (subtotal, tierCfg) => {
+  if (!tierCfg?.enabled || !Array.isArray(tierCfg.tiers)) return null;
 
-  let currentTier = null;
-  let nextTier = null;
+  const milestones = tierCfg.tiers
+    .filter((t) => t && Number(t.threshold) > 0)
+    .sort((a, b) => a.threshold - b.threshold) // ascending for the bar
+    .map((t) => ({
+      threshold: t.threshold,
+      label: t.label,
+      type: t.type === "free_shipping" ? "free_shipping" : "percent",
+      percent: t.type === "free_shipping" ? null : t.percent ?? null,
+      reached: subtotal >= t.threshold,
+    }));
 
-  for (let i = 0; i < tiers.length; i++) {
-    if (subtotal >= tiers[i].threshold) {
-      currentTier = tiers[i];
-      nextTier = tiers[i + 1] || null;
-    } else {
-      if (!nextTier) nextTier = tiers[i];
-      break;
-    }
-  }
+  if (!milestones.length) return null;
 
-  const amountToNextTier = nextTier
-    ? Math.max(0, nextTier.threshold - subtotal)
-    : 0;
+  const nextMilestone = milestones.find((m) => !m.reached) || null;
+  const reached = milestones.filter((m) => m.reached);
+  const currentLabel = reached.length ? reached[reached.length - 1].label : null;
+  const maxThreshold = milestones[milestones.length - 1].threshold;
+  const fillPercent =
+    maxThreshold > 0
+      ? Math.min(100, Math.round((subtotal / maxThreshold) * 100))
+      : 0;
 
   return {
-    currentTier: currentTier
+    enabled: true,
+    milestones,
+    nextMilestone: nextMilestone
       ? {
-          threshold: currentTier.threshold,
-          percent: currentTier.percent,
-          label: currentTier.label,
+          threshold: nextMilestone.threshold,
+          label: nextMilestone.label,
+          type: nextMilestone.type,
+          amountAway: Math.max(0, nextMilestone.threshold - subtotal),
         }
       : null,
-    nextTier: nextTier
-      ? {
-          threshold: nextTier.threshold,
-          percent: nextTier.percent,
-          label: nextTier.label,
-        }
-      : null,
-    amountToNextTier,
-    tiers: tiers.map((t) => ({
-      threshold: t.threshold,
-      percent: t.percent,
-      label: t.label,
-      reached: subtotal >= t.threshold,
-    })),
-    // Also include free shipping threshold
-    freeShipping: {
-      threshold: freeShippingThreshold,
-      reached: subtotal >= freeShippingThreshold,
-      amountNeeded: Math.max(0, freeShippingThreshold - subtotal),
-    },
+    currentLabel,
+    fillPercent,
   };
 };
 
@@ -464,4 +530,5 @@ module.exports = {
   calculateBundleDiscounts,
   calculateTierProgress,
   resolveShippingConfig,
+  getDiscountTierConfig,
 };

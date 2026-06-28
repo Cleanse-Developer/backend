@@ -15,7 +15,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
 });
 
 // Media filter: accepts images + videos (for CMS reel uploads)
@@ -35,7 +35,7 @@ const mediaFilter = (req, file, cb) => {
 const uploadMedia = multer({
   storage,
   fileFilter: mediaFilter,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
 });
 
 module.exports = upload;

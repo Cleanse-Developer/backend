@@ -65,7 +65,7 @@ const listProducts = asyncHandler(async (req, res) => {
         sortOption = { name: -1 };
         break;
       case "featured":
-        sortOption = { isFeatured: -1, createdAt: -1 };
+        sortOption = { isFeatured: -1, featuredOrder: 1, createdAt: -1 };
         break;
       case "newest":
         sortOption = { createdAt: -1 };

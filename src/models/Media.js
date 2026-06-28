@@ -20,6 +20,10 @@ const mediaSchema = new mongoose.Schema(
     originalName: { type: String, default: "" },
     optimized: { type: Boolean, default: false },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    // Hidden from the admin Media tab (e.g. legacy Cloudinary assets after migration).
+    hidden: { type: Boolean, default: false },
+    // Source Cloudinary URL this S3 asset was migrated from (idempotent dedupe).
+    migratedFrom: { type: String, index: { sparse: true } },
   },
   { timestamps: true }
 );
