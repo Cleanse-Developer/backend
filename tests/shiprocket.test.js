@@ -75,8 +75,8 @@ t("distinct products with same size do not collide", () => {
 
 // --- idempotency key shape (mirrors webhook controller) ---
 t("idempotency key is awb:status:ts", () => {
-  const p = { awb: "ABC", shipment_status_id: 7, current_timestamp: "23 05 2023 11:43:52" };
-  const key = `sr:${p.awb}:${p.shipment_status_id}:${p.current_timestamp || ""}`;
+  const p = { awb: "ABC", current_status_id: 7, current_timestamp: "23 05 2023 11:43:52" };
+  const key = `sr:${p.awb}:${p.current_status_id}:${p.current_timestamp || ""}`;
   assert.strictEqual(key, "sr:ABC:7:23 05 2023 11:43:52");
 });
 

@@ -27,6 +27,12 @@ stub("../models/WebhookEvent", {
     state.created.push(doc);
   },
 });
+stub("../models/ShiprocketWebhookLog", {
+  create: async (doc) => {
+    state.logs = state.logs || [];
+    state.logs.push(doc);
+  },
+});
 stub("../services/shiprocket.service", {
   ndrAction: async (awb, action) => {
     state.ndrCalls.push({ awb, action });
@@ -83,6 +89,7 @@ const t = async (name, fn) => {
   state.created = [];
   state.ndrCalls = [];
   state.refundCalls = [];
+  state.logs = [];
   await fn();
   passed++;
   console.log(`  ok  ${name}`);
@@ -92,7 +99,7 @@ const t = async (name, fn) => {
   await t("401 on missing/bad x-api-key", async () => {
     const res = mockRes();
     await handleShiprocketTracking(
-      { headers: {}, body: { awb: "AWB1", shipment_status_id: 7 } },
+      { headers: {}, body: { awb: "AWB1", current_status_id: 7 } },
       res
     );
     assert.strictEqual(res.statusCode, 401);
@@ -114,7 +121,7 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "AWB1", shipment_status_id: 7, current_timestamp: "x" },
+        body: { awb: "AWB1", current_status_id: 7, current_timestamp: "x" },
       },
       res
     );
@@ -128,7 +135,7 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "NOPE", shipment_status_id: 7 },
+        body: { awb: "NOPE", current_status_id: 7 },
       },
       res
     );
@@ -146,7 +153,7 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "AWB1", shipment_status_id: 7, current_status: "DELIVERED" },
+        body: { awb: "AWB1", current_status_id: 7, current_status: "DELIVERED" },
       },
       res
     );
@@ -160,6 +167,18 @@ const t = async (name, fn) => {
     assert.ok(order.adminNotes.some((n) => n.actor === "system" && n.event === "payment:paid"));
   });
 
+  await t("maps on current_status_id when both ids present (regression)", async () => {
+    // Real Shiprocket sends BOTH ids in different enums: current_status_id=20
+    // (In Transit, canonical) + shipment_status_id=18 (other enum). Must use 20.
+    const order = fakeOrder({ status: "shipped" });
+    state.order = order;
+    await handleShiprocketTracking(
+      { headers: { "x-api-key": "secret-token" }, body: { awb: "AWB1", current_status_id: 20, shipment_status_id: 18, current_status: "IN TRANSIT" } },
+      mockRes()
+    );
+    assert.strictEqual(order.status, "in_transit");
+  });
+
   await t("out-of-order in_transit after delivered is ignored", async () => {
     const order = fakeOrder({ status: "delivered" });
     state.order = order;
@@ -167,7 +186,7 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "AWB1", shipment_status_id: 20 }, // In Transit
+        body: { awb: "AWB1", current_status_id: 20 }, // In Transit
       },
       res
     );
@@ -181,7 +200,7 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "AWB1", shipment_status_id: 36 }, // Undelivered
+        body: { awb: "AWB1", current_status_id: 36 }, // Undelivered
       },
       res
     );
@@ -196,7 +215,7 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "AWB1", shipment_status_id: 36 },
+        body: { awb: "AWB1", current_status_id: 36 },
       },
       res
     );
@@ -211,12 +230,32 @@ const t = async (name, fn) => {
     await handleShiprocketTracking(
       {
         headers: { "x-api-key": "secret-token" },
-        body: { awb: "AWB1", shipment_status_id: 16 }, // RTO Delivered
+        body: { awb: "AWB1", current_status_id: 16 }, // RTO Delivered
       },
       res
     );
     assert.strictEqual(order.shipping.isRTO, true);
     assert.strictEqual(state.refundCalls.length, 1);
+  });
+
+  await t("audit log written for every call (processed + unauthorized)", async () => {
+    // processed
+    state.order = fakeOrder({ status: "shipped" });
+    await handleShiprocketTracking(
+      { headers: { "x-api-key": "secret-token" }, body: { awb: "AWB1", current_status_id: 20, current_status: "IN TRANSIT", current_timestamp: "t1" } },
+      mockRes()
+    );
+    assert.strictEqual(state.logs.length, 1);
+    assert.strictEqual(state.logs[0].result, "processed");
+    assert.ok(state.logs[0].payload && state.logs[0].payload.awb === "AWB1", "full payload captured");
+    assert.strictEqual(state.logs[0].appliedStatus, "in_transit");
+
+    // unauthorized still logged
+    state.logs = [];
+    await handleShiprocketTracking({ headers: {}, body: { awb: "AWB1", current_status_id: 7 } }, mockRes());
+    assert.strictEqual(state.logs.length, 1);
+    assert.strictEqual(state.logs[0].result, "unauthorized");
+    assert.strictEqual(state.logs[0].authorized, false);
   });
 
   console.log(`\n${passed} passed`);

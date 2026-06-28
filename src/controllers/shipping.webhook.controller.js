@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const Order = require("../models/Order");
 const WebhookEvent = require("../models/WebhookEvent");
+const ShiprocketWebhookLog = require("../models/ShiprocketWebhookLog");
 const { mapStatus, canAdvanceForward, TERMINAL } = require("../utils/shiprocketStatus");
 const { ndrAction } = require("../services/shiprocket.service");
 const { processOrderRefund, restockOrder } = require("../services/refund.service");
@@ -192,68 +193,110 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
  * token; 400 on malformed; 500 on transient failure (Shiprocket retries).
  */
 const handleShiprocketTracking = async (req, res) => {
-  const expectedToken = process.env.SHIPROCKET_WEBHOOK_TOKEN;
-  const apiKey = req.headers["x-api-key"];
-
-  if (!expectedToken || !constantTimeEqual(apiKey, expectedToken)) {
-    return res.status(401).json({ error: "Invalid api key" });
-  }
-
   const payload = req.body || {};
-  const awb = payload.awb;
-  const statusId = payload.shipment_status_id ?? payload.current_status_id;
+  const apiKey = req.headers["x-api-key"];
+  const expectedToken = process.env.SHIPROCKET_WEBHOOK_TOKEN;
+  const authorized = !!expectedToken && constantTimeEqual(apiKey, expectedToken);
+  // Map on current_status_id (canonical status table); shipment_status_id is a
+  // different enum, used only as fallback.
+  const statusId = payload.current_status_id ?? payload.shipment_status_id;
 
-  if (!awb || statusId === undefined || statusId === null) {
-    return res.status(400).json({ error: "Missing awb or status id" });
-  }
+  // Audit record — populated as we go, written once in `finally` (best-effort,
+  // never blocks the response). Captures the FULL payload for forensic review.
+  const record = {
+    receivedAt: new Date(),
+    authorized,
+    awb: payload.awb,
+    currentStatus: payload.current_status,
+    currentStatusId: payload.current_status_id,
+    shipmentStatus: payload.shipment_status,
+    shipmentStatusId: payload.shipment_status_id,
+    srOrderId: payload.sr_order_id != null ? String(payload.sr_order_id) : undefined,
+    channelOrderId: payload.order_id != null ? String(payload.order_id) : undefined,
+    ip: req.headers["x-forwarded-for"] || req.ip,
+    payload,
+    headers: {
+      "content-type": req.headers["content-type"],
+      "user-agent": req.headers["user-agent"],
+    },
+  };
+  let code = 200;
+  let result = "processed";
 
-  console.log(
-    `[ShiprocketWebhook] AWB ${awb}, status ${payload.current_status || payload.shipment_status} (${statusId}), order ${payload.order_id || payload.sr_order_id || "?"}`
-  );
+  try {
+    if (!authorized) {
+      result = "unauthorized";
+      code = 401;
+      return res.status(code).json({ error: "Invalid api key" });
+    }
+    if (!payload.awb || statusId === undefined || statusId === null) {
+      result = "bad_request";
+      code = 400;
+      return res.status(code).json({ error: "Missing awb or status id" });
+    }
 
-  // Idempotency: Shiprocket sends no event id, so synthesize one. Retries of the
-  // same event share the key and short-circuit.
-  const eventId = `sr:${awb}:${statusId}:${payload.current_timestamp || ""}`;
-  if (await WebhookEvent.exists({ eventId })) {
-    return res.status(200).json({ status: "ok", duplicate: true });
-  }
+    console.log(
+      `[ShiprocketWebhook] AWB ${payload.awb}, status ${payload.current_status || payload.shipment_status} (${statusId}), order ${payload.order_id || payload.sr_order_id || "?"}`
+    );
 
-  // Resolve the order: by AWB (forward or return leg), fallback by sr_order_id.
-  let order = await Order.findOne({
-    $or: [
-      { "shipping.awbNumber": awb },
-      { "shipping.returnShipment.awbNumber": awb },
-    ],
-  });
-  if (!order && payload.sr_order_id) {
-    order = await Order.findOne({
-      "shipping.shiprocketOrderId": String(payload.sr_order_id),
+    // Idempotency: synthesize an event id (Shiprocket sends none).
+    const eventId = `sr:${payload.awb}:${statusId}:${payload.current_timestamp || ""}`;
+    if (await WebhookEvent.exists({ eventId })) {
+      result = "duplicate";
+      return res.status(200).json({ status: "ok", duplicate: true });
+    }
+
+    // Resolve order by AWB (forward or return leg), fallback by sr_order_id.
+    let order = await Order.findOne({
+      $or: [
+        { "shipping.awbNumber": payload.awb },
+        { "shipping.returnShipment.awbNumber": payload.awb },
+      ],
     });
+    if (!order && payload.sr_order_id) {
+      order = await Order.findOne({ "shipping.shiprocketOrderId": String(payload.sr_order_id) });
+    }
+
+    if (!order) {
+      console.warn(`[ShiprocketWebhook] No order for AWB ${payload.awb}`);
+      result = "unknown_order";
+      return res.status(200).json({ status: "ok", unknown: true });
+    }
+
+    const isReturnLeg = order.shipping?.returnShipment?.awbNumber === payload.awb;
+    record.matchedOrder = order._id;
+    record.orderId = order.orderId;
+    record.isReturnLeg = isReturnLeg;
+
+    try {
+      await applyEvent(order, payload, statusId, isReturnLeg);
+    } catch (err) {
+      console.error(`[ShiprocketWebhook] processing error (AWB ${payload.awb}):`, err.message);
+      result = "error";
+      record.error = err.message;
+      code = 500;
+      return res.status(code).json({ error: "Processing failed" });
+    }
+
+    record.appliedStatus = order.status;
+
+    try {
+      await WebhookEvent.create({ eventId, source: "shiprocket", event: String(statusId) });
+    } catch (err) {
+      if (err.code !== 11000) console.error("Shiprocket dedup record error:", err.message);
+    }
+
+    result = "processed";
+    return res.status(200).json({ status: "ok" });
+  } finally {
+    record.result = result;
+    record.responseCode = code;
+    try {
+      await ShiprocketWebhookLog.create(record);
+    } catch (e) {
+      console.error("Shiprocket webhook log write failed:", e.message);
+    }
   }
-
-  if (!order) {
-    // Unknown shipment — ack so Shiprocket stops retrying, but log it.
-    console.warn(`[ShiprocketWebhook] No order for AWB ${awb}`);
-    return res.status(200).json({ status: "ok", unknown: true });
-  }
-
-  const isReturnLeg = order.shipping?.returnShipment?.awbNumber === awb;
-
-  try {
-    await applyEvent(order, payload, statusId, isReturnLeg);
-  } catch (err) {
-    console.error(`[ShiprocketWebhook] processing error (AWB ${awb}):`, err.message);
-    return res.status(500).json({ error: "Processing failed" });
-  }
-
-  // Record only after success so a transient failure reprocesses cleanly.
-  try {
-    await WebhookEvent.create({ eventId, source: "shiprocket", event: String(statusId) });
-  } catch (err) {
-    if (err.code !== 11000) console.error("Shiprocket dedup record error:", err.message);
-  }
-
-  return res.status(200).json({ status: "ok" });
 };
 
 module.exports = { handleShiprocketTracking };

@@ -5,6 +5,7 @@ const ApiResponse = require("../../utils/ApiResponse");
 const sr = require("../../services/shiprocket.service");
 const shiprocketMode = require("../../utils/shiprocketMode");
 const shiprocketConfig = require("../../utils/shiprocketConfig");
+const ShiprocketWebhookLog = require("../../models/ShiprocketWebhookLog");
 
 const TRACKING_URL = (awb) => `https://shiprocket.co/tracking/${awb}`;
 
@@ -189,6 +190,18 @@ const orderServiceability = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ serviceability: r }, "Serviceability fetched"));
 });
 
+// GET /api/admin/orders/:id/shiprocket/logs — every webhook call for this order
+// (matched by our order id OR by either of its AWBs).
+const orderWebhookLogs = asyncHandler(async (req, res) => {
+  const order = await loadOrder(req.params.id);
+  const awbs = [order.shipping?.awbNumber, order.shipping?.returnShipment?.awbNumber].filter(Boolean);
+  const filter = awbs.length
+    ? { $or: [{ matchedOrder: order._id }, { awb: { $in: awbs } }] }
+    : { matchedOrder: order._id };
+  const logs = await ShiprocketWebhookLog.find(filter).sort({ receivedAt: -1 }).limit(200).lean();
+  res.json(ApiResponse.ok({ logs }, "Webhook logs"));
+});
+
 // ---- Global (account-level) operations ----
 
 // GET /api/admin/shiprocket/pickup
@@ -253,6 +266,21 @@ const setConfig = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ config }, "Shiprocket config saved"));
 });
 
+// GET /api/admin/shiprocket/webhook-logs?awb=&result=&orderId=&limit=
+// Global debug view (incl. unmatched/failed calls not tied to an order).
+const webhookLogs = asyncHandler(async (req, res) => {
+  const { awb, result, orderId, limit = 100 } = req.query;
+  const filter = {};
+  if (awb) filter.awb = awb;
+  if (result) filter.result = result;
+  if (orderId) filter.orderId = orderId;
+  const logs = await ShiprocketWebhookLog.find(filter)
+    .sort({ receivedAt: -1 })
+    .limit(Math.min(500, Number(limit) || 100))
+    .lean();
+  res.json(ApiResponse.ok({ logs }, "Webhook logs"));
+});
+
 module.exports = {
   // per-order
   syncOrder,
@@ -266,6 +294,7 @@ module.exports = {
   ndrAction,
   createReturn,
   orderServiceability,
+  orderWebhookLogs,
   // global
   listPickup,
   addPickup,
@@ -276,4 +305,5 @@ module.exports = {
   setMode,
   getConfig,
   setConfig,
+  webhookLogs,
 };

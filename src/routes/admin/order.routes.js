@@ -30,5 +30,6 @@ router.get("/:id/shiprocket/track", srOps.track);
 router.post("/:id/shiprocket/ndr", srOps.ndrAction);
 router.post("/:id/shiprocket/return", srOps.createReturn);
 router.get("/:id/shiprocket/serviceability", srOps.orderServiceability);
+router.get("/:id/shiprocket/logs", srOps.orderWebhookLogs);
 
 module.exports = router;

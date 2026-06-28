@@ -18,4 +18,7 @@ router.patch("/mode", srOps.setMode);
 router.get("/config", srOps.getConfig);
 router.patch("/config", srOps.setConfig);
 
+// Raw webhook audit log (global debug view)
+router.get("/webhook-logs", srOps.webhookLogs);
+
 module.exports = router;
