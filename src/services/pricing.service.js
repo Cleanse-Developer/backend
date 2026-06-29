@@ -199,47 +199,62 @@ const calculateBundleDiscounts = async (cartItems) => {
  * hardcoded SHIPPING constants (those are only a last-resort fallback when no
  * zone exists yet).
  *
- * Resolution order, given an optional delivery location:
+ * Resolution: if the delivery address belongs to a shipping zone, use that
+ * zone's rate; otherwise fall back to the GLOBAL standard rate (admin Settings).
+ * Zone membership = the zone's pincodes include the delivery pincode, OR (for
+ * state-wide zones) the zone's states include the delivery state. An address in
+ * NO zone always uses the global rate — there is no "first zone" catch-all.
+ *
+ * Resolution order:
  *   1. Zone whose pincodes include location.pincode
- *   2. Zone whose states include location.state
- *   3. Any single active zone (single-zone deployments)
- *   4. SHIPPING constants
+ *   2. Zone whose states include location.state  (state-wide zones)
+ *   3. GLOBAL SHIPPING constants (rate + free threshold)
  *
  * @param {{ pincode?: string, state?: string } | null} location
  * @param {number} defaultFreeAbove - Free-shipping threshold to use when no zone
- *   override exists. Defaults to the SHIPPING constant, but callers (pricing) pass
- *   the admin-configured free_shipping tier threshold so the two stay in sync.
- * @returns {Promise<{ standardRate: number, freeAbove: number }>}
+ *   matches. Defaults to the SHIPPING constant, but callers (pricing) pass the
+ *   admin-configured free_shipping tier threshold so the two stay in sync.
+ * @returns {Promise<{ standardRate: number, freeAbove: number, zone: string|null }>}
  */
+// Global standard shipping rate from admin Settings (key "SHIPPING"), falling
+// back to the constant. This is the rate used when the address is in no zone.
+const getGlobalStandardRate = async () => {
+  const doc = await Settings.findOne({ key: "SHIPPING" }).lean();
+  const rate = Number(doc?.value?.STANDARD_RATE);
+  return Number.isFinite(rate) ? rate : SHIPPING.STANDARD_RATE;
+};
+
 const resolveShippingConfig = async (
   location = null,
   defaultFreeAbove = SHIPPING.FREE_THRESHOLD
 ) => {
-  const zones = await ShippingZone.find({ isActive: true })
-    .select("pincodes states rates")
-    .lean();
-
-  if (!zones.length) {
-    return {
-      standardRate: SHIPPING.STANDARD_RATE,
-      freeAbove: defaultFreeAbove,
-    };
-  }
+  const globalRate = await getGlobalStandardRate();
+  const global = { standardRate: globalRate, freeAbove: defaultFreeAbove, zone: null };
 
   const pincode = location?.pincode ? String(location.pincode).trim() : null;
   const state = location?.state ? String(location.state).trim().toLowerCase() : null;
 
-  let zone =
+  // No location to match on → global.
+  if (!pincode && !state) return global;
+
+  const zones = await ShippingZone.find({ isActive: true })
+    .select("name pincodes states rates")
+    .lean();
+  if (!zones.length) return global;
+
+  // Pincode match first (precise), then state-wide zone. No match → global.
+  const zone =
     (pincode && zones.find((z) => z.pincodes?.includes(pincode))) ||
     (state &&
-      zones.find((z) =>
-        z.states?.some((s) => s.trim().toLowerCase() === state)
-      )) ||
-    zones[0];
+      zones.find((z) => z.states?.some((s) => s.trim().toLowerCase() === state))) ||
+    null;
+
+  if (!zone) return global;
 
   return {
-    standardRate: zone.rates?.standard ?? SHIPPING.STANDARD_RATE,
+    standardRate: zone.rates?.standard ?? globalRate,
     freeAbove: zone.rates?.freeAbove ?? defaultFreeAbove,
+    zone: zone.name || null,
   };
 };
 

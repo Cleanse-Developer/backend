@@ -90,21 +90,33 @@ const handleWhatsAppWebhook = async (req, res) => {
   const expected = process.env.WHATSAPP_WEBHOOK_TOKEN;
   const provided = req.headers["x-api-key"] || req.query.token;
   if (!expected || !constantTimeEqual(provided, expected)) {
+    console.warn(`[WhatsAppWebhook] rejected — bad/missing token`, {
+      hasHeader: Boolean(req.headers["x-api-key"]),
+    });
     return res.status(401).json({ error: "Invalid token" });
   }
+
+  console.log(`[WhatsAppWebhook] received`, { body: req.body });
 
   const reply = parseButtonReply(req.body);
   if (!reply) {
     // Not a button reply (status update, text message, etc.) — ack and ignore.
+    console.log(`[WhatsAppWebhook] ignored — not a button reply`);
     return res.status(200).json({ status: "ignored" });
   }
 
   const action = classifyReply(reply.buttonText);
+  console.log(`[WhatsAppWebhook] parsed`, {
+    from: reply.from,
+    buttonText: reply.buttonText,
+    action,
+  });
   if (!action) return res.status(200).json({ status: "ignored", reason: "unrecognised button" });
 
   // Idempotency: same inbound message may be retried.
   const eventId = `wa:${reply.messageId || `${reply.from}:${reply.buttonText}`}`;
   if (await WebhookEvent.exists({ eventId })) {
+    console.log(`[WhatsAppWebhook] duplicate`, { eventId });
     return res.status(200).json({ status: "ok", duplicate: true });
   }
 
@@ -113,6 +125,7 @@ const handleWhatsAppWebhook = async (req, res) => {
     console.warn(`[WhatsAppWebhook] no awaiting COD order for reply`, reply);
     return res.status(200).json({ status: "ok", unknown: true });
   }
+  console.log(`[WhatsAppWebhook] resolved order ${order.orderId} → ${action}`);
 
   try {
     if (action === "confirm") await confirmCodOrder(order);

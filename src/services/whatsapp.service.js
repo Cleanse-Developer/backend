@@ -41,6 +41,37 @@ const bodyComponent = (texts) => ({
   parameters: texts.map((t) => ({ type: "text", text: String(t) })),
 });
 
+/**
+ * Send a template with structured logging around it. `label` names the flow and
+ * `ctx` carries identifiers (orderId / userId) so failures are traceable in logs.
+ * Rethrows so callers can still record flow-specific state (e.g. codConfirmation).
+ */
+const loggedSend = async (label, ctx, payload) => {
+  console.log(`[WhatsApp] ${label} sending`, {
+    to: payload.to,
+    template: payload.templateName,
+    ...ctx,
+  });
+  try {
+    const res = await sendTemplate(payload);
+    console.log(`[WhatsApp] ${label} sent`, {
+      to: payload.to,
+      wamid: res?.wamid,
+      status: res?.status,
+      ...ctx,
+    });
+    return res;
+  } catch (err) {
+    console.error(`[WhatsApp] ${label} FAILED`, {
+      to: payload.to,
+      template: payload.templateName,
+      error: err.message,
+      ...ctx,
+    });
+    throw err;
+  }
+};
+
 const customerName = (order) =>
   (order.shippingAddress?.fullName || "there").split(" ")[0] || "there";
 
@@ -74,7 +105,7 @@ const deliveryEstimate = (order) => {
  * Returns slide response { wamid, conversationId, status }.
  */
 const sendOrderConfirmation = (order) =>
-  sendTemplate({
+  loggedSend("order_confirmation", { orderId: order.orderId }, {
     to: toWhatsAppNumber(order),
     templateName: env.WHATSAPP_TPL_ORDER_CONFIRM,
     languageCode: LANG,
@@ -93,7 +124,7 @@ const sendOrderConfirmation = (order) =>
  * Body vars: {{1}} name, {{2}} orderId, {{3}} items, {{4}} total, {{5}} delivery.
  */
 const sendOrderSummary = (order) =>
-  sendTemplate({
+  loggedSend("order_summary", { orderId: order.orderId }, {
     to: toWhatsAppNumber(order),
     templateName: env.WHATSAPP_TPL_ORDER_SUMMARY,
     languageCode: LANG,
@@ -113,8 +144,11 @@ const sendOrderSummary = (order) =>
  * Body var: {{1}} name. No-op (returns null) if the user has no phone.
  */
 const sendWelcomeMessage = (user) => {
-  if (!user?.phone) return Promise.resolve(null);
-  return sendTemplate({
+  if (!user?.phone) {
+    console.log(`[WhatsApp] welcome skipped (no phone)`, { userId: user?._id });
+    return Promise.resolve(null);
+  }
+  return loggedSend("welcome", { userId: user._id }, {
     to: userWhatsAppNumber(user),
     templateName: env.WHATSAPP_TPL_WELCOME,
     languageCode: LANG,

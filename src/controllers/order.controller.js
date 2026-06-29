@@ -307,6 +307,7 @@ const placeOrder = asyncHandler(async (req, res) => {
   // run on confirmation (order.service.confirmCodOrder). If the WhatsApp send
   // fails, fall back to processing immediately so the order is never stuck.
   if (env.WHATSAPP_COD_HOLD) {
+    console.log(`[COD] holding ${orderId} — sending WhatsApp confirmation`);
     order.codConfirmation = { status: "awaiting", sentAt: new Date() };
     await order.save();
     try {
@@ -315,6 +316,7 @@ const placeOrder = asyncHandler(async (req, res) => {
         order.codConfirmation.wamid = resp.wamid;
         await order.save();
       }
+      console.log(`[COD] ${orderId} awaiting confirmation`, { wamid: resp?.wamid || null });
       return res
         .status(201)
         .json(ApiResponse.created({ order }, "Order placed — awaiting WhatsApp confirmation"));

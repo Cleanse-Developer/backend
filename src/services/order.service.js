@@ -61,7 +61,13 @@ const isAwaitingCod = (order) =>
  * post-actions (loyalty/referral/Shiprocket), then sends the order summary.
  */
 const confirmCodOrder = async (order) => {
-  if (!isAwaitingCod(order)) return order;
+  if (!isAwaitingCod(order)) {
+    console.log(`[COD] confirm ignored for ${order?.orderId} — not awaiting`, {
+      status: order?.codConfirmation?.status,
+    });
+    return order;
+  }
+  console.log(`[COD] confirming ${order.orderId}`);
 
   order.status = "confirmed";
   order.codConfirmation.status = "confirmed";
@@ -87,7 +93,13 @@ const confirmCodOrder = async (order) => {
  * there.
  */
 const cancelCodOrder = async (order, reason = "Customer declined via WhatsApp") => {
-  if (!isAwaitingCod(order)) return order;
+  if (!isAwaitingCod(order)) {
+    console.log(`[COD] cancel ignored for ${order?.orderId} — not awaiting`, {
+      status: order?.codConfirmation?.status,
+    });
+    return order;
+  }
+  console.log(`[COD] cancelling ${order.orderId} — ${reason}`);
 
   order.status = "cancelled";
   order.codConfirmation.status = "cancelled";
