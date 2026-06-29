@@ -15,6 +15,7 @@ const {
   cancelShipment: cancelShiprocketShipment,
 } = require("../services/shiprocket.service");
 const razorpayService = require("../services/razorpay.service");
+const { confirmCodOrder, isAwaitingCod } = require("../services/order.service");
 const { extractLocalNumber } = require("../utils/phoneUtils");
 
 // Build a one-line address from a shippingAddress sub-document.
@@ -224,4 +225,44 @@ const cancelOrderByOrderId = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ orderId: order.orderId, status: order.status }, "Order cancelled successfully"));
 });
 
-module.exports = { getOrdersByPhone, cancelOrderByOrderId };
+// POST /api/external/orders/confirm  body: { orderId? }
+// Confirm a COD order awaiting approval (pending → confirmed; runs the held
+// loyalty/referral/Shiprocket post-actions). With an orderId, confirms that one.
+// With an empty body, confirms ALL orders currently awaiting confirmation.
+const confirmOrders = asyncHandler(async (req, res) => {
+  const { orderId } = req.body || {};
+
+  if (orderId) {
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      throw ApiError.notFound("Order not found");
+    }
+    if (!isAwaitingCod(order)) {
+      throw ApiError.badRequest(
+        `Order is not awaiting confirmation (status "${order.status}").`
+      );
+    }
+    await confirmCodOrder(order);
+    return res.json(
+      ApiResponse.ok({ orderId: order.orderId, status: order.status }, "Order confirmed")
+    );
+  }
+
+  // No orderId — confirm every order still awaiting COD confirmation.
+  const awaiting = await Order.find({
+    "payment.method": "cod",
+    "codConfirmation.status": "awaiting",
+  });
+
+  const orders = [];
+  for (const order of awaiting) {
+    await confirmCodOrder(order);
+    orders.push({ orderId: order.orderId, status: order.status });
+  }
+
+  res.json(
+    ApiResponse.ok({ confirmed: orders.length, orders }, `Confirmed ${orders.length} order(s)`)
+  );
+});
+
+module.exports = { getOrdersByPhone, cancelOrderByOrderId, confirmOrders };
