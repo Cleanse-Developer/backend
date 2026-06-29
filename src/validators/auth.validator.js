@@ -124,4 +124,29 @@ const googleAuthRules = [
   body("referralCode").optional().trim().isString(),
 ];
 
-module.exports = { sendOtpRules, verifyOtpRules, verifyWidgetTokenRules, googleAuthRules, loginRules, registerRules, checkAccountRules };
+const linkPhoneRules = [
+  // accessToken kept optional for when real MSG91 server verification lands.
+  body("accessToken").optional().isString(),
+  body("phone")
+    .trim()
+    .notEmpty()
+    .withMessage("Phone number is required")
+    .custom((value) => {
+      if (!isValidPhone(value)) {
+        throw new Error("Valid 10-digit Indian mobile number is required");
+      }
+      return true;
+    }),
+];
+
+const linkEmailRules = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Valid email is required")
+    .normalizeEmail(),
+];
+
+module.exports = { sendOtpRules, verifyOtpRules, verifyWidgetTokenRules, googleAuthRules, linkPhoneRules, linkEmailRules, loginRules, registerRules, checkAccountRules };

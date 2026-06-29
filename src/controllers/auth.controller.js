@@ -343,6 +343,54 @@ const verifyWidgetToken = asyncHandler(async (req, res) => {
   return loginUser(user, req, res, { referralApplied, isNewUser });
 });
 
+// ── POST /api/auth/link-phone (auth) ─────────────────────────────────────────
+// Attach a verified phone to the CURRENT logged-in account (e.g. a Google user
+// adding a phone). Rejects if the phone already belongs to a different account.
+
+const linkPhone = asyncHandler(async (req, res) => {
+  const { phone } = req.body;
+
+  // TEMP happy-path: MSG91 server-side verification skipped (no AuthKey yet) —
+  // the widget already verified the OTP on the client, so we trust `phone`.
+  const localPhone = extractLocalNumber(phone);
+  if (!/^[6-9]\d{9}$/.test(localPhone)) {
+    throw ApiError.badRequest("Invalid mobile number");
+  }
+
+  const existing = await User.findOne({ phone: localPhone }).select("_id");
+  if (existing && existing._id.toString() !== req.user._id.toString()) {
+    throw ApiError.conflict("This phone number is already linked to another account.");
+  }
+
+  const parsed = parsePhone(phone);
+  await User.updateOne(
+    { _id: req.user._id },
+    { phone: localPhone, countryCode: parsed?.countryCode || DEFAULT_COUNTRY_CODE }
+  );
+
+  const user = await User.findById(req.user._id);
+  res.json(ApiResponse.ok({ user: sanitizeUser(user) }, "Phone number verified"));
+});
+
+// ── POST /api/auth/link-email (auth) ─────────────────────────────────────────
+// Attach an email to the CURRENT logged-in account (e.g. a phone-OTP user adding
+// an email). Rejects if the email already belongs to a different account.
+
+const linkEmail = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const existing = await User.findOne({ email: normalizedEmail }).select("_id");
+  if (existing && existing._id.toString() !== req.user._id.toString()) {
+    throw ApiError.conflict("This email is already linked to another account.");
+  }
+
+  await User.updateOne({ _id: req.user._id }, { email: normalizedEmail });
+
+  const user = await User.findById(req.user._id);
+  res.json(ApiResponse.ok({ user: sanitizeUser(user) }, "Email updated"));
+});
+
 // ── POST /api/auth/refresh ───────────────────────────────────────────────────
 
 const refresh = asyncHandler(async (req, res) => {
@@ -407,4 +455,4 @@ const checkAccount = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { sendOtp, verifyOtp, verifyWidgetToken, googleAuth, loginWithPassword, register, refresh, logout, checkAccount };
+module.exports = { sendOtp, verifyOtp, verifyWidgetToken, googleAuth, linkPhone, linkEmail, loginWithPassword, register, refresh, logout, checkAccount };
