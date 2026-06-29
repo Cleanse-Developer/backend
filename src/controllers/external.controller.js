@@ -265,4 +265,23 @@ const confirmOrders = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { getOrdersByPhone, cancelOrderByOrderId, confirmOrders };
+// POST /api/external/whatsapp/incoming — log an incoming WhatsApp message.
+// Public (the automation builder sends no auth header). Just logs the payload
+// to the server console and returns 200 so the workflow step shows success.
+const logIncomingMessage = asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  console.log("[WA incoming]", JSON.stringify(body));
+  console.log(
+    `[WA incoming] from=${body.senderName || "?"} (${body.senderWaId || "?"}) ` +
+      `type=${body.messageType || "?"} message="${body.message || ""}"`
+  );
+
+  res.json(ApiResponse.ok({ received: true }));
+});
+
+module.exports = {
+  getOrdersByPhone,
+  cancelOrderByOrderId,
+  confirmOrders,
+  logIncomingMessage,
+};

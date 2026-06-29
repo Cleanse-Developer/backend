@@ -278,6 +278,28 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     addedAt: now,
   });
 
+  // Admin-confirming an order runs the same post-actions as a customer COD
+  // approval (loyalty + referral + Shiprocket schedule + confirmation email).
+  // For a held COD order this delegates to confirmCodOrder (idempotent). For an
+  // already-processed order (e.g. prepaid) we just send the confirmation email.
+  if (status === "confirmed") {
+    const { confirmCodOrder, isAwaitingCod } = require("../../services/order.service");
+    if (isAwaitingCod(order)) {
+      await confirmCodOrder(order);
+    } else {
+      try {
+        const to = order.shippingAddress?.email;
+        if (to) {
+          await require("../../services/email.service").sendOrderConfirmation(to, order);
+        } else {
+          console.log(`[admin] no email on ${order.orderId} — skipping confirmation email`);
+        }
+      } catch (err) {
+        console.error(`[admin] confirmation email failed for ${order.orderId}:`, err.message);
+      }
+    }
+  }
+
   // Booking the pickup is what tells Shiprocket to send a courier (assigns AWB +
   // schedules pickup + label). Best-effort: never fail the status update if
   // Shiprocket errors. After this the courier collects and the webhook advances

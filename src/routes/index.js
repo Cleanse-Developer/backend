@@ -27,6 +27,13 @@ router.use("/referral", require("./referral.routes").publicRouter);
 router.use("/payments/webhook", require("./payment.routes").webhookRouter);
 router.use("/whatsapp/webhook", require("./whatsapp.routes").webhookRouter);
 
+// Public WhatsApp-automation message logger (no auth — builder sends no token).
+// Mounted before the token-guarded /external below so it stays public.
+router.post(
+  "/external/whatsapp/incoming",
+  require("../controllers/external.controller").logIncomingMessage
+);
+
 // Protected customer routes
 router.use("/checkout", auth, require("./checkout.routes"));
 router.use("/cart", auth, require("./cart.routes"));
