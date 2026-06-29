@@ -64,7 +64,7 @@ const sendOrderConfirmation = async (to, order) => {
       <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
         <h2 style="color: #4F2C22;">Thank you for your order!</h2>
         <p>Your order <strong>${order.orderId}</strong> has been confirmed.</p>
-        <p>Total: ₹${(order.total / 100).toFixed(2)}</p>
+        <p>Total: ₹${Number(order.pricing?.total || 0).toFixed(2)}</p>
         <p>We'll send you tracking details once your order ships.</p>
       </div>
     `,

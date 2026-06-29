@@ -15,6 +15,7 @@ const { createOrderId } = require("../services/order.service");
 const { calculatePricing } = require("../services/pricing.service");
 const { awardPoints, redeemPoints } = require("../services/loyalty.service");
 const { processReferralReward } = require("../services/referral.service");
+const { sendOrderConfirmation } = require("../services/email.service");
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const {
@@ -353,6 +354,14 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
   // Queue adhoc Shiprocket order creation (best-effort, non-blocking).
   const { scheduleShiprocketCreate } = require("../jobs/createShiprocketOrder");
   await scheduleShiprocketCreate(order._id);
+
+  // Order confirmation email (best-effort).
+  try {
+    const to = order.shippingAddress?.email;
+    if (to) await sendOrderConfirmation(to, order);
+  } catch (err) {
+    console.error(`Confirmation email failed for ${order.orderId}:`, err.message);
+  }
 
   res.json(ApiResponse.created({ order }, "Order placed successfully"));
 });

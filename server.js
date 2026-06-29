@@ -64,7 +64,14 @@ const start = async () => {
   require("./src/jobs/expirePaymentSession");
   require("./src/jobs/loyaltyExpiry");
   require("./src/jobs/createShiprocketOrder");
+  require("./src/jobs/expireStaleOrders");
   await agenda.start();
+
+  // Sweep stale unconfirmed COD orders hourly.
+  const existingStale = await agenda.jobs({ name: "expire-stale-orders" });
+  if (existingStale.length === 0) {
+    await agenda.every("1 hour", "expire-stale-orders");
+  }
 
   // Schedule daily cleanup job if not already scheduled
   const existingPurge = await agenda.jobs({ name: "purge-old-jobs" });

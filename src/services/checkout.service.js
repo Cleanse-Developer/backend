@@ -10,6 +10,7 @@ const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const { createOrderId } = require("./order.service");
 const { awardPoints, redeemPoints } = require("./loyalty.service");
 const { processReferralReward } = require("./referral.service");
+const { sendOrderConfirmation } = require("./email.service");
 const ApiError = require("../utils/ApiError");
 
 /**
@@ -285,6 +286,17 @@ const postOrderActions = async (order, session) => {
   // Opportunistically complete a thin (OTP-created) profile from shipping info.
   const { backfillUserProfile } = require("./profile.service");
   await backfillUserProfile(session.user, order.shippingAddress);
+
+  // Order confirmation email (best-effort). Only for confirmed orders — a
+  // pending COD here gets its email later when it's confirmed.
+  if (order.status === "confirmed") {
+    try {
+      const to = order.shippingAddress?.email;
+      if (to) await sendOrderConfirmation(to, order);
+    } catch (err) {
+      console.error(`Confirmation email failed for ${order.orderId}:`, err.message);
+    }
+  }
 };
 
 /**

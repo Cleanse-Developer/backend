@@ -8,6 +8,7 @@ const generateOrderId = require("../utils/generateOrderId");
 const { awardPoints } = require("./loyalty.service");
 const { processReferralReward } = require("./referral.service");
 const whatsappService = require("./whatsapp.service");
+const { sendOrderConfirmation } = require("./email.service");
 
 /**
  * Generate a unique order ID in the format "CA-YYYY-XXXX".
@@ -47,6 +48,17 @@ const runCodPostActions = async (order) => {
     await scheduleShiprocketCreate(order._id);
   } catch (err) {
     console.error(`[COD] Shiprocket schedule failed for ${order.orderId}:`, err.message);
+  }
+
+  try {
+    const to = order.shippingAddress?.email;
+    if (to) {
+      await sendOrderConfirmation(to, order);
+    } else {
+      console.log(`[COD] no email on ${order.orderId} — skipping confirmation email`);
+    }
+  } catch (err) {
+    console.error(`[COD] confirmation email failed for ${order.orderId}:`, err.message);
   }
 };
 
