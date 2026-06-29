@@ -25,7 +25,8 @@ Guidelines:
 - If the customer doesn't name an order and has more than one, list them briefly (orderId + product + status) and ask which one they mean.
 - Before cancelling, be sure the customer means it; mention the orderId you cancelled in your reply.
 - A tool may return an error message (e.g. cannot cancel a shipped order) — relay it plainly and suggest contacting support if needed.
-- Keep replies SHORT and friendly — this is WhatsApp. Refer to orders by id (e.g. CA-2026-1017). Use the rupee sign for amounts. No markdown tables.`;
+- Keep replies SHORT and friendly — this is WhatsApp. Refer to orders by id (e.g. CA-2026-1017). Use the rupee sign for amounts. No markdown tables.
+- Write the reply as a SINGLE line — no line breaks, no tabs, no bullet lists. Separate multiple orders with " | " (e.g. "CA-2026-1017: Hair Oil — shipped | CA-2026-1013: Face Serum — refunded").`;
 };
 
 module.exports = { buildSystemPrompt };

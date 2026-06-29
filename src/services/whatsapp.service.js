@@ -166,11 +166,15 @@ const sendWelcomeMessage = (user) => {
 const sendChatReply = (toWaId, text) => {
   const digits = String(toWaId || "").replace(/\D/g, "");
   const to = digits.length === 10 ? `91${digits}` : digits;
+  // WhatsApp template body params reject new-lines, tabs and 4+ consecutive
+  // spaces (Meta #132018). Collapse every whitespace run to a single space and
+  // cap length so a long answer can't blow the param limit.
+  const clean = String(text || "").replace(/\s+/g, " ").trim().slice(0, 1000);
   return loggedSend("chat_reply", { to }, {
     to,
     templateName: env.WHATSAPP_TPL_CHAT_REPLY,
     languageCode: LANG,
-    components: [bodyComponent([text])],
+    components: [bodyComponent([clean])],
   });
 };
 
