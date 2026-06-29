@@ -51,18 +51,20 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
       throw new Error("No couriers available");
     }
 
-    const fastest = couriers.reduce((a, b) =>
-      a.estimated_delivery_days < b.estimated_delivery_days ? a : b
-    );
+    // estimated_delivery_days comes back as a STRING (e.g. "4") — parse before
+    // comparing/adding, else lexicographic compare + string concat ("4"+2="42").
+    const edd = (c) => Number(c.estimated_delivery_days) || 0;
+    const fastest = couriers.reduce((a, b) => (edd(a) <= edd(b) ? a : b));
+    const fast = edd(fastest);
 
     return {
       available: true,
-      estimatedDays: `${fastest.estimated_delivery_days}-${fastest.estimated_delivery_days + 2}`,
+      estimatedDays: `${fast}-${fast + 2}`,
       couriers: couriers.map((c) => ({
         courierId: c.courier_company_id,
         name: c.courier_name,
         rate: c.rate,
-        estimatedDays: c.estimated_delivery_days,
+        estimatedDays: edd(c),
       })),
     };
   } catch (err) {

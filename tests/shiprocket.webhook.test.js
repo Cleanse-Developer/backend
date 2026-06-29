@@ -167,6 +167,27 @@ const t = async (name, fn) => {
     assert.ok(order.adminNotes.some((n) => n.actor === "system" && n.event === "payment:paid"));
   });
 
+  await t("picked-up webhook advances pickup_scheduled -> shipped + sets shippedAt", async () => {
+    const order = fakeOrder({ status: "pickup_scheduled", shipping: { awbNumber: "AWB1" } });
+    state.order = order;
+    await handleShiprocketTracking(
+      { headers: { "x-api-key": "secret-token" }, body: { awb: "AWB1", current_status_id: 51, current_status: "PICKED UP" } },
+      mockRes()
+    );
+    assert.strictEqual(order.status, "shipped");
+    assert.ok(order.shippedAt, "shippedAt set on pickup");
+  });
+
+  await t("pickup-scheduled webhook (id 4) sets awaiting pickup", async () => {
+    const order = fakeOrder({ status: "packed", shipping: { awbNumber: "AWB1" } });
+    state.order = order;
+    await handleShiprocketTracking(
+      { headers: { "x-api-key": "secret-token" }, body: { awb: "AWB1", current_status_id: 4, current_status: "PICKUP SCHEDULED" } },
+      mockRes()
+    );
+    assert.strictEqual(order.status, "pickup_scheduled");
+  });
+
   await t("maps on current_status_id when both ids present (regression)", async () => {
     // Real Shiprocket sends BOTH ids in different enums: current_status_id=20
     // (In Transit, canonical) + shipment_status_id=18 (other enum). Must use 20.

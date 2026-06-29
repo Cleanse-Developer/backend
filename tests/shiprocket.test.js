@@ -18,6 +18,15 @@ const t = (name, fn) => {
 t("delivered maps to delivered/delivered kind", () => {
   assert.deepStrictEqual(mapStatus(7), { status: "delivered", kind: "delivered" });
 });
+t("pickup ids (4/70/34) map to pickup_scheduled", () => {
+  assert.strictEqual(mapStatus(4).status, "pickup_scheduled");
+  assert.strictEqual(mapStatus(70).status, "pickup_scheduled");
+  assert.strictEqual(mapStatus(34).status, "pickup_scheduled");
+});
+t("picked-up ids (6/51) map to shipped", () => {
+  assert.strictEqual(mapStatus(6).status, "shipped");
+  assert.strictEqual(mapStatus(51).status, "shipped");
+});
 t("undelivered (36) is ndr branch", () => {
   assert.strictEqual(mapStatus(36).kind, "ndr");
 });
@@ -38,6 +47,13 @@ t("unmapped id returns null", () => {
 });
 
 // --- out-of-order guard ---
+t("advances packed -> pickup_scheduled -> shipped", () => {
+  assert.strictEqual(canAdvanceForward("packed", "pickup_scheduled"), true);
+  assert.strictEqual(canAdvanceForward("pickup_scheduled", "shipped"), true);
+});
+t("does NOT regress pickup_scheduled -> packed", () => {
+  assert.strictEqual(canAdvanceForward("pickup_scheduled", "packed"), false);
+});
 t("advances shipped -> in_transit", () => {
   assert.strictEqual(canAdvanceForward("shipped", "in_transit"), true);
 });

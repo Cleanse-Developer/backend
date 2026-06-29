@@ -112,6 +112,13 @@ const orderSchema = new mongoose.Schema(
     giftWrap: { type: Boolean, default: false },
     giftMessage: { type: String, maxlength: 200 },
     status: { type: String, enum: ORDER_STATUSES, default: "pending" },
+    // Lifecycle milestone timestamps (powers the order timeline). Previously set
+    // in code but absent from the schema → silently dropped by strict mode.
+    confirmedAt: { type: Date },
+    pickupBookedAt: { type: Date },
+    shippedAt: { type: Date }, // set when courier picks up (webhook)
+    deliveredAt: { type: Date },
+    cancelledAt: { type: Date },
     shipping: {
       shiprocketOrderId: { type: String },
       shipmentId: { type: String },

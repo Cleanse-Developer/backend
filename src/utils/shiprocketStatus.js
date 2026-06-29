@@ -1,16 +1,19 @@
-// Shiprocket shipment_status_id → our order status. Codes are from the official
-// status table (apidocs.shiprocket.in). Only the ids we act on are mapped; any
-// id not here is stored raw and logged.
+// Shiprocket **current_status_id** → our order status. Keyed on the canonical
+// "current status" table (the same enum the webhook's current_status_id uses —
+// verified against the official webhook sample where current_status_id 20 = "In
+// Transit"). NOT the separate shipment_status_id enum (where 20 = Pickup
+// Exception). Only the ids we act on are mapped; anything else is stored + logged.
 //
 // `kind` groups the downstream branch the webhook handler should take.
 
 const STATUS_MAP = {
-  // forward chain
-  4: { status: "shipped", kind: "forward" }, // Pickup Scheduled
-  70: { status: "shipped", kind: "forward" }, // Pickup Booked
+  // forward chain — pickup booked (awaiting courier collection)
+  4: { status: "pickup_scheduled", kind: "forward" }, // Pickup Scheduled
+  70: { status: "pickup_scheduled", kind: "forward" }, // Pickup Booked
+  34: { status: "pickup_scheduled", kind: "forward" }, // Out For Pickup (courier en route to collect)
+  // picked up by courier (= handed over)
   6: { status: "shipped", kind: "forward" }, // Shipped
   51: { status: "shipped", kind: "forward" }, // Picked Up
-  42: { status: "shipped", kind: "forward" }, // Picked Up (alt)
   20: { status: "in_transit", kind: "forward" }, // In Transit
   43: { status: "in_transit", kind: "forward" }, // Reached Destination Hub
   44: { status: "in_transit", kind: "forward" }, // Misrouted
@@ -57,10 +60,11 @@ const FORWARD_RANK = {
   confirmed: 1,
   processing: 2,
   packed: 3,
-  shipped: 4,
-  in_transit: 5,
-  out_for_delivery: 6,
-  delivered: 7,
+  pickup_scheduled: 4,
+  shipped: 5, // = picked up by courier
+  in_transit: 6,
+  out_for_delivery: 7,
+  delivered: 8,
 };
 
 const TERMINAL = new Set([

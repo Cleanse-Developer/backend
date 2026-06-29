@@ -79,6 +79,8 @@ const applyEvent = async (order, payload, statusId, isReturnLeg) => {
     case "forward": {
       if (canAdvanceForward(order.status, mapping.status)) {
         order.status = mapping.status;
+        // "shipped" = courier has physically picked it up.
+        if (mapping.status === "shipped" && !order.shippedAt) order.shippedAt = new Date();
         logActivity(order, {
           actor: ACTORS.COURIER,
           event: `tracking:${mapping.status}`,
@@ -197,9 +199,11 @@ const handleShiprocketTracking = async (req, res) => {
   const apiKey = req.headers["x-api-key"];
   const expectedToken = process.env.SHIPROCKET_WEBHOOK_TOKEN;
   const authorized = !!expectedToken && constantTimeEqual(apiKey, expectedToken);
-  // Map on current_status_id (canonical status table); shipment_status_id is a
-  // different enum, used only as fallback.
-  const statusId = payload.current_status_id ?? payload.shipment_status_id;
+  // Map ONLY on current_status_id — shipment_status_id is a different enum
+  // (e.g. id 20 = In Transit here, but = Pickup Exception there), so feeding it
+  // into the current_status_id-keyed map would mis-map. Real payloads always
+  // include current_status_id (per the official sample).
+  const statusId = payload.current_status_id;
 
   // Audit record — populated as we go, written once in `finally` (best-effort,
   // never blocks the response). Captures the FULL payload for forensic review.

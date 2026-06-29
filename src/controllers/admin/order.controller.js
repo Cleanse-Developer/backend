@@ -17,11 +17,16 @@ const {
   createReturnOrder,
 } = require("../../services/shiprocket.service");
 
+// Forward chain: pending → confirmed → processing → packed → pickup_scheduled
+// (admin "Book courier pickup") → shipped (= picked up, webhook) → in_transit →
+// out_for_delivery → delivered. After booking, courier events drive the rest via
+// the webhook; the manual edges past pickup_scheduled exist only as overrides.
 const VALID_TRANSITIONS = {
   pending: ["confirmed", "cancelled"],
   confirmed: ["processing", "cancelled"],
   processing: ["packed", "cancelled"],
-  packed: ["shipped", "cancelled"],
+  packed: ["pickup_scheduled", "cancelled"],
+  pickup_scheduled: ["shipped", "in_transit", "rto_in_transit", "cancelled"],
   shipped: ["in_transit", "rto_in_transit"],
   in_transit: ["out_for_delivery", "rto_in_transit"],
   out_for_delivery: ["delivered", "rto_in_transit"],
@@ -49,17 +54,18 @@ const note = (order, text, by, at = new Date(), opts = {}) => {
 };
 
 /**
- * Run the Shiprocket forward-fulfillment pipeline for an order. Prefers the
- * one-call wrapper (create + AWB + pickup + label + manifest); falls back to
- * the manual step chain if the wrapper is unavailable/partial. Best-effort:
- * persists whatever succeeded and records failures as admin notes — never
- * throws. Idempotent: skips create if already shipped, resumes at AWB if a
- * shipment exists without an AWB.
+ * Book the courier pickup for an order: assign AWB → request pickup →
+ * label/manifest. The adhoc Shiprocket order already exists (created at
+ * checkout), so this resumes from its `shipmentId`; if missing, the one-call
+ * `shipForward` wrapper creates + books in one shot. Best-effort: persists
+ * whatever succeeded, records failures as notes, never throws. Idempotent:
+ * skips if an AWB already exists. After this the courier collects on its own
+ * schedule and the webhook advances the order (→ "picked up" = shipped).
  */
-const runShipPipeline = async (order, byUser, at) => {
+const bookCourierPickup = async (order, byUser, at) => {
   order.shipping = order.shipping || {};
 
-  // Idempotency: already fully shipped.
+  // Idempotency: pickup already booked (AWB assigned).
   if (order.shipping.awbNumber) return;
 
   const cfg = await getShiprocketConfig();
@@ -83,7 +89,7 @@ const runShipPipeline = async (order, byUser, at) => {
         }
         if (order.shipping.awbNumber) {
           order.shipping.trackingUrl = `https://shiprocket.co/tracking/${order.shipping.awbNumber}`;
-          note(order, `Shipment created via Shiprocket. AWB ${order.shipping.awbNumber}`, byUser, at, { actor: "system" });
+          note(order, `Courier pickup booked. Tracking ${order.shipping.awbNumber} (${order.shipping.courierName || "courier"})`, byUser, at, { actor: "system" });
           return;
         }
       }
@@ -126,9 +132,9 @@ const runShipPipeline = async (order, byUser, at) => {
       })
       .catch((e) => note(order, `Manifest generation failed: ${e.message}`, byUser, at, { actor: "system" }));
 
-    note(order, `Shipment created (fallback). AWB ${order.shipping.awbNumber || "pending"}`, byUser, at, { actor: "system" });
+    note(order, `Courier pickup booked (fallback). Tracking ${order.shipping.awbNumber || "pending"}`, byUser, at, { actor: "system" });
   } catch (err) {
-    note(order, `Shiprocket shipment creation failed: ${err.message}`, byUser, at, { actor: "system" });
+    note(order, `Courier pickup booking failed: ${err.message}`, byUser, at, { actor: "system" });
   }
 };
 
@@ -252,10 +258,11 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
   order.status = status;
 
-  // Set timestamps based on status
+  // Set timestamps based on status. Note: shippedAt (= picked up) is set by the
+  // webhook when the courier collects, not here.
   const now = new Date();
   if (status === "confirmed") order.confirmedAt = now;
-  if (status === "shipped") order.shippedAt = now;
+  if (status === "pickup_scheduled") order.pickupBookedAt = now;
   if (status === "delivered") order.deliveredAt = now;
   if (status === "cancelled") order.cancelledAt = now;
 
@@ -271,10 +278,12 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     addedAt: now,
   });
 
-  // If shipped, run the Shiprocket fulfillment pipeline (best-effort: never
-  // fail the status update if Shiprocket errors).
-  if (status === "shipped") {
-    await runShipPipeline(order, req.user._id, now);
+  // Booking the pickup is what tells Shiprocket to send a courier (assigns AWB +
+  // schedules pickup + label). Best-effort: never fail the status update if
+  // Shiprocket errors. After this the courier collects and the webhook advances
+  // the order to "picked up" automatically.
+  if (status === "pickup_scheduled") {
+    await bookCourierPickup(order, req.user._id, now);
   }
 
   // If cancelled and a shipment exists, cancel it at Shiprocket too.
