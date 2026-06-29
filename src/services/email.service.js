@@ -25,18 +25,28 @@ const isDev = () =>
 const sendEmail = async ({ to, subject, html }) => {
   // In development, just log the email
   if (isDev()) {
-    console.log(`[EMAIL] To: ${to} | Subject: ${subject}`);
+    console.log(
+      `[EMAIL] dev mode (NODE_ENV=${process.env.NODE_ENV}, SMTP_PASS set=${!!process.env.SMTP_PASS}) — NOT sending. To: ${to} | Subject: ${subject}`
+    );
     console.log(`[EMAIL] Body: ${html.substring(0, 200)}...`);
     return { accepted: [to] };
   }
 
+  console.log(`[EMAIL] sending → To: ${to} | Subject: ${subject} | via ${process.env.SMTP_USER}`);
   const mail = getTransporter();
-  return mail.sendMail({
-    from: process.env.EMAIL_FROM,
-    to,
-    subject,
-    html,
-  });
+  try {
+    const info = await mail.sendMail({
+      from: process.env.EMAIL_FROM,
+      to,
+      subject,
+      html,
+    });
+    console.log(`[EMAIL] sent → ${info.messageId} | accepted: ${info.accepted} | rejected: ${info.rejected}`);
+    return info;
+  } catch (err) {
+    console.error(`[EMAIL] send FAILED → To: ${to} | ${err.message}`);
+    throw err;
+  }
 };
 
 const sendOTPEmail = async (to, otp) => {

@@ -97,6 +97,7 @@ const CMS_DEFAULTS = {
         video: null,
         posterImage: null,
         position: "left-top",
+        reelUrl: "https://www.instagram.com/reel/C_BRnIQyDWs/",
       },
       {
         title: "Sacred Rituals",
@@ -104,6 +105,7 @@ const CMS_DEFAULTS = {
         video: null,
         posterImage: null,
         position: "center",
+        reelUrl: "https://www.instagram.com/reel/C3hdGOWphsG/",
       },
       {
         title: "Evening Care",
@@ -111,6 +113,7 @@ const CMS_DEFAULTS = {
         video: null,
         posterImage: null,
         position: "right-bottom",
+        reelUrl: "https://www.instagram.com/reel/C5msAMFMHx-/",
       },
     ],
   },
