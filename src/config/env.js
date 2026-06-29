@@ -23,6 +23,11 @@ const envSchema = Joi.object({
   MSG91_AUTHKEY: Joi.string().allow("").default(""),
   MSG91_VERIFY_URL: Joi.string().uri().default("https://control.msg91.com/api/v5/widget/verifyAccessToken"),
 
+  // Google Sign-In (auth-code popup flow). Client ID is public; the secret is
+  // server-side only (used to exchange the auth code for tokens).
+  GOOGLE_CLIENT_ID: Joi.string().allow("").default(""),
+  GOOGLE_CLIENT_SECRET: Joi.string().allow("").default(""),
+
   // Active storage backend for uploads. Flip to switch providers — no code change.
   STORAGE_PROVIDER: Joi.string().valid("cloudinary", "s3").default("s3"),
 

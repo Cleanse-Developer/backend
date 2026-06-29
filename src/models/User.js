@@ -7,6 +7,8 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     phone: { type: String, unique: true, sparse: true, trim: true },
     countryCode: { type: String, default: "+91", trim: true },
+    // Google account subject id (sub). Sparse-unique: only set for Google sign-ins.
+    googleId: { type: String, unique: true, sparse: true },
     password: { type: String, select: false },
     dateOfBirth: { type: Date },
     role: {

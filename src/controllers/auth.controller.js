@@ -8,6 +8,8 @@ const generateReferralCode = require("../utils/generateReferralCode");
 const { applyReferralAtSignup } = require("../services/referral.service");
 const whatsappService = require("../services/whatsapp.service");
 const { verifyAccessToken } = require("../services/msg91.service");
+const { OAuth2Client } = require("google-auth-library");
+const env = require("../config/env");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const asyncHandler = require("../utils/asyncHandler");
@@ -235,6 +237,79 @@ const verifyOtp = asyncHandler(async (req, res) => {
   return loginUser(user, req, res, { referralApplied, isNewUser });
 });
 
+// ── POST /api/auth/google ────────────────────────────────────────────────────
+// Google Sign-In (auth-code popup flow). The client returns a one-time auth
+// code; we exchange it for tokens (server-side, using the client secret), verify
+// the ID token, then find / link / create the user and issue an app session.
+
+// `postmessage` is the special redirect_uri used by the GIS popup code client.
+const googleClient = new OAuth2Client(
+  env.GOOGLE_CLIENT_ID,
+  env.GOOGLE_CLIENT_SECRET,
+  "postmessage"
+);
+
+const googleAuth = asyncHandler(async (req, res) => {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw ApiError.badRequest("Google sign-in is not configured");
+  }
+
+  const { code, referralCode } = req.body;
+
+  let payload;
+  try {
+    const { tokens } = await googleClient.getToken(code);
+    const ticket = await googleClient.verifyIdToken({
+      idToken: tokens.id_token,
+      audience: env.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    console.error("[Google] token exchange/verify failed:", err.message);
+    throw ApiError.unauthorized("Google sign-in failed. Please try again.");
+  }
+
+  const googleId = payload?.sub;
+  const email = payload?.email ? payload.email.toLowerCase().trim() : null;
+  if (!googleId) {
+    throw ApiError.unauthorized("Google sign-in failed. Please try again.");
+  }
+
+  // Match by googleId first; otherwise link to an existing same-email account
+  // (Google verifies the email, so this is safe), else create a fresh user.
+  let user = await User.findOne({ googleId });
+  let isNewUser = false;
+  let referralApplied = null;
+
+  if (!user && email) {
+    user = await User.findOne({ email });
+    if (user && !user.googleId) {
+      user.googleId = googleId;
+      await user.save();
+    }
+  }
+
+  if (!user) {
+    isNewUser = true;
+    user = await User.create({
+      fullName: payload.name || "User",
+      email: email || undefined,
+      googleId,
+      referralCode: await generateReferralCode(),
+    });
+
+    if (referralCode && referralCode.trim()) {
+      referralApplied = await applyReferralAtSignup(user, referralCode.trim());
+    }
+
+    whatsappService.sendWelcomeMessage(user).catch((err) =>
+      console.error(`[WhatsApp] welcome failed for ${user._id}:`, err.message)
+    );
+  }
+
+  return loginUser(user, req, res, { referralApplied, isNewUser });
+});
+
 // ── POST /api/auth/verify-widget-token ───────────────────────────────────────
 // Phone OTP login via the MSG91 widget. The widget sends + verifies the OTP on
 // the client and returns an access-token; this exchanges it for an app session.
@@ -332,4 +407,4 @@ const checkAccount = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { sendOtp, verifyOtp, verifyWidgetToken, loginWithPassword, register, refresh, logout, checkAccount };
+module.exports = { sendOtp, verifyOtp, verifyWidgetToken, googleAuth, loginWithPassword, register, refresh, logout, checkAccount };

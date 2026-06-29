@@ -114,4 +114,14 @@ const checkAccountRules = [
     .withMessage("Phone number is required"),
 ];
 
-module.exports = { sendOtpRules, verifyOtpRules, verifyWidgetTokenRules, loginRules, registerRules, checkAccountRules };
+const googleAuthRules = [
+  body("code")
+    .trim()
+    .notEmpty()
+    .withMessage("Google auth code is required")
+    .isString()
+    .withMessage("Google auth code must be a string"),
+  body("referralCode").optional().trim().isString(),
+];
+
+module.exports = { sendOtpRules, verifyOtpRules, verifyWidgetTokenRules, googleAuthRules, loginRules, registerRules, checkAccountRules };
