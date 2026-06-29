@@ -156,6 +156,24 @@ const sendWelcomeMessage = (user) => {
   });
 };
 
+/**
+ * Push the order-assistant's free-form reply to a customer via the chat-reply
+ * template (env WHATSAPP_TPL_CHAT_REPLY, e.g. "promoshiyon"). The template must
+ * have exactly one body variable that carries `text`.
+ * `toWaId` is a raw number (E.164 digits, local 10-digit, or with "+"). Returns
+ * the slide response. Best-effort — caller wraps in try/catch.
+ */
+const sendChatReply = (toWaId, text) => {
+  const digits = String(toWaId || "").replace(/\D/g, "");
+  const to = digits.length === 10 ? `91${digits}` : digits;
+  return loggedSend("chat_reply", { to }, {
+    to,
+    templateName: env.WHATSAPP_TPL_CHAT_REPLY,
+    languageCode: LANG,
+    components: [bodyComponent([text])],
+  });
+};
+
 module.exports = {
   toWhatsAppNumber,
   userWhatsAppNumber,
@@ -163,4 +181,5 @@ module.exports = {
   sendOrderConfirmation,
   sendOrderSummary,
   sendWelcomeMessage,
+  sendChatReply,
 };

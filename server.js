@@ -111,10 +111,19 @@ const start = async () => {
     console.log(`Server running on port ${PORT} (${process.env.NODE_ENV})`);
   });
 
+  // Warm the WhatsApp order-assistant: spawn the MCP tool subprocess and build
+  // the agent once, after the server is listening (tools call back into /api).
+  // Best-effort — a failure here must not stop the server.
+  const aiService = require("./src/services/ai.service");
+  aiService
+    .init()
+    .catch((err) => console.error("[ai] agent warm-up failed:", err.message));
+
   // Graceful shutdown
   const gracefulShutdown = async () => {
     console.log("Shutting down gracefully...");
     await agenda.stop();
+    await aiService.close().catch(() => {});
     process.exit(0);
   };
   process.on("SIGTERM", gracefulShutdown);

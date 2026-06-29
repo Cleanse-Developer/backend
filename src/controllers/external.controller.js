@@ -16,6 +16,8 @@ const {
 } = require("../services/shiprocket.service");
 const razorpayService = require("../services/razorpay.service");
 const { confirmCodOrder, isAwaitingCod } = require("../services/order.service");
+const { answerOrderQuery } = require("../services/ai.service");
+const whatsappService = require("../services/whatsapp.service");
 const { extractLocalNumber } = require("../utils/phoneUtils");
 
 // Build a one-line address from a shippingAddress sub-document.
@@ -45,8 +47,53 @@ const toOrderSummary = (order) => {
     productImage: first ? first.image || "" : "",
     itemCount: items.length,
     amount: order.pricing?.total ?? 0,
+    status: order.status,
+    createdAt: order.createdAt,
     address: formatAddress(order.shippingAddress),
   };
+};
+
+// Status-rich view for a single order (powers "where is my order" answers).
+const toOrderDetail = (order) => ({
+  orderId: order.orderId,
+  status: order.status,
+  paymentMethod: order.payment?.method,
+  paymentStatus: order.payment?.status,
+  amount: order.pricing?.total ?? 0,
+  items: (order.items || []).map((i) => ({
+    name: i.name,
+    quantity: i.quantity,
+    price: i.price,
+    isFreeGift: i.isFreeGift || false,
+  })),
+  shipping: {
+    awbNumber: order.shipping?.awbNumber,
+    courierName: order.shipping?.courierName,
+    trackingUrl: order.shipping?.trackingUrl,
+    estimatedDelivery: order.shipping?.estimatedDelivery,
+    lastTrackingStatus: order.shipping?.lastTrackingStatus,
+  },
+  timeline: {
+    createdAt: order.createdAt,
+    confirmedAt: order.confirmedAt,
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+    cancelledAt: order.cancelledAt,
+  },
+  address: formatAddress(order.shippingAddress),
+});
+
+// Ownership check: does this order belong to the given phone? Compares the bare
+// 10-digit local number against both the shipping and contact phone. Used to
+// scope chat-initiated lookups/actions so a customer can only touch their own
+// orders (a guessed orderId from someone else is rejected).
+const orderBelongsToPhone = (order, phone) => {
+  const local = extractLocalNumber(phone);
+  if (!local) return false;
+  return (
+    extractLocalNumber(order.shippingAddress?.phone) === local ||
+    extractLocalNumber(order.contactPhone) === local
+  );
 };
 
 // GET /api/external/orders?phone=<number>
@@ -71,12 +118,30 @@ const getOrdersByPhone = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok(orders.map(toOrderSummary)));
 });
 
+// GET /api/external/orders/:orderId?phone=<number>
+// Status-rich detail for one order. When phone is supplied, the order must
+// belong to it (chat path) — else 403.
+const getOrderDetail = asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+  const order = await Order.findOne({ orderId });
+  if (!order) {
+    throw ApiError.notFound("Order not found");
+  }
+
+  const phone = req.query.phone;
+  if (phone && !orderBelongsToPhone(order, phone)) {
+    throw ApiError.forbidden("Order does not belong to this phone number");
+  }
+
+  res.json(ApiResponse.ok(toOrderDetail(order)));
+});
+
 // POST /api/external/orders/cancel  body: { orderId }
 // Cancels an order by its human-readable orderId. Mirrors the customer cancel
 // flow (status guard, Shiprocket cancel, refund, stock + reward reversals) but
 // is attributed to the external system rather than a logged-in user.
 const cancelOrderByOrderId = asyncHandler(async (req, res) => {
-  const { orderId } = req.body;
+  const { orderId, phone } = req.body;
   if (!orderId) {
     throw ApiError.badRequest("orderId is required");
   }
@@ -84,6 +149,11 @@ const cancelOrderByOrderId = asyncHandler(async (req, res) => {
   const order = await Order.findOne({ orderId });
   if (!order) {
     throw ApiError.notFound("Order not found");
+  }
+
+  // Ownership scoping for chat-initiated cancels. No phone → legacy partner call.
+  if (phone && !orderBelongsToPhone(order, phone)) {
+    throw ApiError.forbidden("Order does not belong to this phone number");
   }
 
   const cancellableStatuses = ["pending", "confirmed", "processing"];
@@ -230,12 +300,16 @@ const cancelOrderByOrderId = asyncHandler(async (req, res) => {
 // loyalty/referral/Shiprocket post-actions). With an orderId, confirms that one.
 // With an empty body, confirms ALL orders currently awaiting confirmation.
 const confirmOrders = asyncHandler(async (req, res) => {
-  const { orderId } = req.body || {};
+  const { orderId, phone } = req.body || {};
 
   if (orderId) {
     const order = await Order.findOne({ orderId });
     if (!order) {
       throw ApiError.notFound("Order not found");
+    }
+    // Ownership scoping for chat-initiated confirms. No phone → legacy call.
+    if (phone && !orderBelongsToPhone(order, phone)) {
+      throw ApiError.forbidden("Order does not belong to this phone number");
     }
     if (!isAwaitingCod(order)) {
       throw ApiError.badRequest(
@@ -297,18 +371,32 @@ const logIncomingMessage = asyncHandler(async (req, res) => {
 
   // Unresolved {{...}} placeholders → slide didn't substitute (test fire or
   // wrong variable names). Real messages send concrete values.
-  if (JSON.stringify(body).includes("{{")) {
+  const hasPlaceholders = JSON.stringify(body).includes("{{");
+  if (hasPlaceholders) {
     console.warn(
       "[WA incoming] WARNING: payload still has {{...}} placeholders — " +
         "slide did not resolve variables (test fire, or wrong variable names)."
     );
   }
 
+  // Ack immediately — slide's HTTP node must not wait on the LLM round-trip.
   res.json(ApiResponse.ok({ received: true }));
+
+  // Fire-and-forget: answer the order query with the LLM+MCP agent and push the
+  // reply back to the customer via the chat-reply template. Skip test fires
+  // (unresolved placeholders) and empty messages. Never throws into the request.
+  if (!hasPlaceholders && message.trim() && (waId || phone)) {
+    answerOrderQuery({ message, phone, name })
+      .then((reply) => {
+        if (reply) return whatsappService.sendChatReply(waId || phone, reply);
+      })
+      .catch((err) => console.error("[WA incoming] assistant reply failed:", err.message));
+  }
 });
 
 module.exports = {
   getOrdersByPhone,
+  getOrderDetail,
   cancelOrderByOrderId,
   confirmOrders,
   logIncomingMessage,

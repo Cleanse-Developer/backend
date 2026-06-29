@@ -70,6 +70,17 @@ const envSchema = Joi.object({
   // (/api/external/*). Fixed value — set once, share with the partner.
   // Required so the endpoints are never accidentally left open.
   EXTERNAL_API_TOKEN: Joi.string().min(16).required(),
+
+  // Gemini API key for the WhatsApp order-assistant (LangChain + MCP).
+  GEMINI_API_KEY: Joi.string().required(),
+  // Gemini model the agent runs on.
+  GEMINI_MODEL: Joi.string().default("gemini-2.5-flash"),
+  // Template used to push the assistant's free-form reply back to the customer
+  // (slide templates can carry a dynamic body variable). One body var = the text.
+  WHATSAPP_TPL_CHAT_REPLY: Joi.string().default("promoshiyon"),
+  // Base URL the MCP order-tools call back into (this same backend). On EC2 keep
+  // it localhost so tool calls never leave the box.
+  API_SELF_BASE: Joi.string().default("http://localhost:5000/api"),
 }).unknown(true);
 
 const { error, value: env } = envSchema.validate(process.env);
