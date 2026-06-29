@@ -20,6 +20,10 @@ const routes = require("./src/routes");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Behind CloudFront/nginx — trust the first proxy hop so express-rate-limit
+// reads the real client IP from X-Forwarded-For instead of throwing.
+app.set("trust proxy", 1);
+
 // Middleware stack
 app.use(helmet());
 app.use(cors(corsOptions));

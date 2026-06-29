@@ -269,8 +269,19 @@ const confirmOrders = asyncHandler(async (req, res) => {
 // Public (the automation builder sends no auth header). Just logs the payload
 // to the server console and returns 200 so the workflow step shows success.
 const logIncomingMessage = asyncHandler(async (req, res) => {
-  const body = req.body || {};
-  console.log("[WA incoming]", JSON.stringify(body));
+  let body = req.body || {};
+  console.log("[WA incoming] raw:", JSON.stringify(body));
+
+  // The builder's test mode wraps the node config and nests the real payload as
+  // a JSON string under `body`. Unwrap it so the message fields are readable.
+  if (typeof body.body === "string") {
+    try {
+      body = JSON.parse(body.body);
+    } catch {
+      /* not JSON — keep the original */
+    }
+  }
+
   console.log(
     `[WA incoming] from=${body.senderName || "?"} (${body.senderWaId || "?"}) ` +
       `type=${body.messageType || "?"} message="${body.message || ""}"`
