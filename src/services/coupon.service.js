@@ -1,5 +1,6 @@
 const Coupon = require("../models/Coupon");
 const Order = require("../models/Order");
+const resolveItemPrice = require("../utils/resolveItemPrice");
 
 /**
  * Validate a coupon code and calculate the discount amount.
@@ -119,8 +120,7 @@ const validateCoupon = async (code, userId, cartSubtotal, effectiveSubtotal, car
 
     // Compute the subtotal of only the matching items
     const matchingSubtotal = matchingItems.reduce((sum, item) => {
-      const price = item.product.price ?? item.product;
-      return sum + (typeof price === "number" ? price : 0) * item.quantity;
+      return sum + resolveItemPrice(item.product, item.selectedSize) * item.quantity;
     }, 0);
 
     // Scale the effective discount base proportionally:

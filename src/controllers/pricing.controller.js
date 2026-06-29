@@ -34,7 +34,7 @@ const guestPricing = asyncHandler(async (req, res) => {
     _id: { $in: productIds },
     isActive: true,
   })
-    .select("_id name price")
+    .select("_id name price sizes")
     .lean();
 
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
@@ -47,7 +47,7 @@ const guestPricing = asyncHandler(async (req, res) => {
 
     const quantity = Math.max(1, Math.min(99, Number(item.quantity) || 1));
     virtualItems.push({
-      product: { _id: product._id, price: product.price },
+      product: { _id: product._id, price: product.price, sizes: product.sizes },
       quantity,
       selectedSize: item.selectedSize || undefined,
     });

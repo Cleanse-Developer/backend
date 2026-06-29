@@ -1,5 +1,6 @@
 const SpecialCoupon = require("../models/SpecialCoupon");
 const Order = require("../models/Order");
+const resolveItemPrice = require("../utils/resolveItemPrice");
 
 /**
  * Find all automatic promotions that currently qualify for the given cart.
@@ -208,11 +209,19 @@ function calculateBXGY(promo, cartItems, effectiveSubtotal) {
       break;
     }
     case "cheapest_in_cart": {
-      getItems = [...cartItems].sort((a, b) => a.product.price - b.product.price);
+      getItems = [...cartItems].sort(
+        (a, b) =>
+          resolveItemPrice(a.product, a.selectedSize) -
+          resolveItemPrice(b.product, b.selectedSize)
+      );
       break;
     }
     case "most_expensive_in_cart": {
-      getItems = [...cartItems].sort((a, b) => b.product.price - a.product.price);
+      getItems = [...cartItems].sort(
+        (a, b) =>
+          resolveItemPrice(b.product, b.selectedSize) -
+          resolveItemPrice(a.product, a.selectedSize)
+      );
       break;
     }
     default:
@@ -232,7 +241,11 @@ function calculateBXGY(promo, cartItems, effectiveSubtotal) {
 
   // Apply discount to the cheapest items first (best for customer)
   let remaining = itemsToDiscount;
-  const sortedGetItems = [...getItems].sort((a, b) => a.product.price - b.product.price);
+  const sortedGetItems = [...getItems].sort(
+    (a, b) =>
+      resolveItemPrice(a.product, a.selectedSize) -
+      resolveItemPrice(b.product, b.selectedSize)
+  );
 
   for (const item of sortedGetItems) {
     if (remaining <= 0) break;
@@ -240,18 +253,19 @@ function calculateBXGY(promo, cartItems, effectiveSubtotal) {
     remaining -= qty;
 
     let discountPerItem = 0;
+    const unitPrice = resolveItemPrice(item.product, item.selectedSize);
     switch (reward.type) {
       case "free":
-        discountPerItem = item.product.price;
+        discountPerItem = unitPrice;
         break;
       case "percentage_off":
-        discountPerItem = Math.round((item.product.price * (reward.discountValue || 0)) / 100);
+        discountPerItem = Math.round((unitPrice * (reward.discountValue || 0)) / 100);
         break;
       case "fixed_off":
-        discountPerItem = Math.min(reward.discountValue || 0, item.product.price);
+        discountPerItem = Math.min(reward.discountValue || 0, unitPrice);
         break;
       default:
-        discountPerItem = item.product.price;
+        discountPerItem = unitPrice;
     }
 
     result.discountAmount += discountPerItem * qty;
@@ -287,11 +301,12 @@ function calculateVolumeDiscount(promo, cartItems) {
   // Calculate discount across matching items
   for (const item of matchingItems) {
     let discountPerItem = 0;
+    const unitPrice = resolveItemPrice(item.product, item.selectedSize);
     if (qualifyingTier.discountType === "percentage") {
-      discountPerItem = Math.round((item.product.price * qualifyingTier.discountValue) / 100);
+      discountPerItem = Math.round((unitPrice * qualifyingTier.discountValue) / 100);
     } else {
       // fixed_per_item
-      discountPerItem = Math.min(qualifyingTier.discountValue, item.product.price);
+      discountPerItem = Math.min(qualifyingTier.discountValue, unitPrice);
     }
     result.discountAmount += discountPerItem * item.quantity;
     result.affectedItemIds.push(item.product._id.toString());
@@ -363,7 +378,7 @@ function calculateFixedPriceBundle(promo, cartItems) {
       break;
     }
 
-    originalTotal += cartItem.product.price * requiredQty;
+    originalTotal += resolveItemPrice(cartItem.product, cartItem.selectedSize) * requiredQty;
     result.affectedItemIds.push(pid);
   }
 

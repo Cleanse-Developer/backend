@@ -23,6 +23,7 @@ const { cancelOrder: cancelShiprocketOrder, cancelShipment: cancelShiprocketShip
 const razorpayService = require("../services/razorpay.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
+const resolveItemPrice = require("../utils/resolveItemPrice");
 
 const POPULATE_PRODUCT = {
   path: "items.product",
@@ -108,7 +109,7 @@ const placeOrder = asyncHandler(async (req, res) => {
     return {
       product: item.product._id,
       name: item.product.name,
-      price: item.product.price,
+      price: resolveItemPrice(item.product, item.selectedSize),
       quantity: item.quantity,
       selectedSize: item.selectedSize,
       image: primaryImage?.url || item.product.images?.[0]?.url || "",

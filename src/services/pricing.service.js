@@ -13,6 +13,7 @@ const {
   SHIPPING,
   GIFT_WRAP_COST,
 } = require("../utils/constants");
+const resolveItemPrice = require("../utils/resolveItemPrice");
 
 /**
  * Default cart-tier-discount config, built from the hardcoded constants.
@@ -91,7 +92,7 @@ const calculateBundleDiscounts = async (cartItems) => {
     if (matchingItems.length >= bundle.minProducts) {
       // Calculate the subtotal of matching items
       const bundleSubtotal = matchingItems.reduce(
-        (sum, item) => sum + item.product.price * item.quantity,
+        (sum, item) => sum + resolveItemPrice(item.product, item.selectedSize) * item.quantity,
         0
       );
 
@@ -152,7 +153,7 @@ const calculateBundleDiscounts = async (cartItems) => {
 
     // Recalculate with available items only
     const bundleSubtotal = availableItems.reduce(
-      (sum, item) => sum + item.product.price * item.quantity,
+      (sum, item) => sum + resolveItemPrice(item.product, item.selectedSize) * item.quantity,
       0
     );
 
@@ -276,7 +277,7 @@ const calculatePricing = async (
 ) => {
   // 1. Calculate subtotal
   const subtotal = cart.items.reduce((sum, item) => {
-    return sum + item.product.price * item.quantity;
+    return sum + resolveItemPrice(item.product, item.selectedSize) * item.quantity;
   }, 0);
 
   // 2. Calculate bundle discounts

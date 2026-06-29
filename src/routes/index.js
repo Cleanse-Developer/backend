@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { auth, optionalAuth } = require("../middleware/auth");
+const externalAuth = require("../middleware/externalAuth");
 const { authLimiter, adminLimiter } = require("../middleware/rateLimiter");
 const roleGuard = require("../middleware/roleGuard");
 
@@ -39,6 +40,9 @@ router.use("/special-coupons", optionalAuth, require("./specialCoupon.routes"));
 router.use("/payments", auth, require("./payment.routes"));
 router.use("/referral", auth, require("./referral.routes"));
 router.use("/loyalty", auth, require("./loyalty.routes"));
+
+// External integration routes (static-token auth, not JWT)
+router.use("/external", externalAuth, require("./external.routes"));
 
 // Admin routes
 router.use("/admin", adminLimiter, require("./admin/index"));

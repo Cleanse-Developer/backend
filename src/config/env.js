@@ -65,6 +65,11 @@ const envSchema = Joi.object({
 
   FRONTEND_URL: Joi.string().default("http://localhost:3000"),
   ADMIN_URL: Joi.string().default("http://localhost:5173"),
+
+  // Static bearer token for external-service integration endpoints
+  // (/api/external/*). Fixed value — set once, share with the partner.
+  // Required so the endpoints are never accidentally left open.
+  EXTERNAL_API_TOKEN: Joi.string().min(16).required(),
 }).unknown(true);
 
 const { error, value: env } = envSchema.validate(process.env);

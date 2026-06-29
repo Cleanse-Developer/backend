@@ -26,6 +26,7 @@ const productSchema = new mongoose.Schema(
       {
         label: { type: String },
         price: { type: Number },
+        compareAtPrice: { type: Number },
         sku: { type: String },
         stock: { type: Number, default: 0 },
       },

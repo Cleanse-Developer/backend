@@ -24,6 +24,7 @@ const {
 } = require("../services/checkout.service");
 const { releaseStock } = require("../services/stock.service");
 const { parsePhone, DEFAULT_COUNTRY_CODE } = require("../utils/phoneUtils");
+const resolveItemPrice = require("../utils/resolveItemPrice");
 const SpinWheelEntry = require("../models/SpinWheelEntry");
 
 const POPULATE_PRODUCT = {
@@ -159,7 +160,7 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     return {
       product: item.product._id,
       name: item.product.name,
-      price: item.product.price,
+      price: resolveItemPrice(item.product, item.selectedSize),
       quantity: item.quantity,
       selectedSize: item.selectedSize,
       image: primaryImage?.url || item.product.images?.[0]?.url || "",
