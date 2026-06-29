@@ -287,6 +287,16 @@ const logIncomingMessage = asyncHandler(async (req, res) => {
       `type=${body.messageType || "?"} message="${body.message || ""}"`
   );
 
+  // Unresolved {{wa.*}} placeholders → the builder didn't substitute. Almost
+  // always a Test-button fire (no real message context) or mismatched variable
+  // names. Send a real WhatsApp message to trigger a live fire.
+  if (JSON.stringify(body).includes("{{")) {
+    console.warn(
+      "[WA incoming] WARNING: payload still has {{...}} placeholders — " +
+        "builder did not resolve variables (test fire, or wrong variable names)."
+    );
+  }
+
   res.json(ApiResponse.ok({ received: true }));
 });
 
