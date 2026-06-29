@@ -282,18 +282,25 @@ const logIncomingMessage = asyncHandler(async (req, res) => {
     }
   }
 
+  // Field names match the slide CONTEXT variables that actually resolve:
+  // {{phone}}, {{name}}, {{message}}, {{wa.senderWaId}}. waId falls back to the
+  // e164 phone when the node sends {{phone_e164}} instead.
+  const name = body.name || "";
+  const phone = body.phone || "";
+  const message = body.message || "";
+  const waId = body.waId || body.phone_e164 || "";
+
   console.log(
-    `[WA incoming] from=${body.senderName || "?"} (${body.senderWaId || "?"}) ` +
-      `type=${body.messageType || "?"} message="${body.message || ""}"`
+    `[WA incoming] from=${name || "?"} phone=${phone || "?"} ` +
+      `waId=${waId || "?"} message="${message}"`
   );
 
-  // Unresolved {{wa.*}} placeholders → the builder didn't substitute. Almost
-  // always a Test-button fire (no real message context) or mismatched variable
-  // names. Send a real WhatsApp message to trigger a live fire.
+  // Unresolved {{...}} placeholders → slide didn't substitute (test fire or
+  // wrong variable names). Real messages send concrete values.
   if (JSON.stringify(body).includes("{{")) {
     console.warn(
       "[WA incoming] WARNING: payload still has {{...}} placeholders — " +
-        "builder did not resolve variables (test fire, or wrong variable names)."
+        "slide did not resolve variables (test fire, or wrong variable names)."
     );
   }
 
