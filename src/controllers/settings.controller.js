@@ -172,6 +172,14 @@ const CMS_DEFAULTS = {
       facebook: "https://facebook.com",
       youtube: "https://www.youtube.com/@cleanseayurveda",
     },
+    contact: {
+      addressLines: [
+        "HRBD Life Sciences Pvt. Ltd.",
+        "42 Wellness Avenue, Bandra West, Mumbai 400050",
+      ],
+      email: "care@cleanseayurveda.com",
+      phone: "+91 80000 00000",
+    },
     copyrightText: "2026 CLEANSE AYURVEDA . ALL RIGHTS RESERVED",
   },
 };
