@@ -12,6 +12,9 @@ const productSchema = new mongoose.Schema(
     concerns: [{ type: String }],
     price: { type: Number, required: true, min: 0 },
     compareAtPrice: { type: Number },
+    // Unit cost (COGS) — product-level fallback used when a size has no costPrice.
+    // Powers gross-profit / margin in the admin KPI dashboard. Optional.
+    costPrice: { type: Number, min: 0 },
     color: { type: String, trim: true },
     tag: {
       type: String,
@@ -27,6 +30,8 @@ const productSchema = new mongoose.Schema(
         label: { type: String },
         price: { type: Number },
         compareAtPrice: { type: Number },
+        // Per-variant unit cost (COGS), preferred over product-level costPrice.
+        costPrice: { type: Number, min: 0 },
         sku: { type: String },
         stock: { type: Number, default: 0 },
       },

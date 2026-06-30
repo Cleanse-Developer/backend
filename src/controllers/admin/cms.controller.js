@@ -1,5 +1,6 @@
 const Settings = require("../../models/Settings");
 const { uploadImage, uploadVideo } = require("../../services/upload.service");
+const { syncReelsToCms } = require("../../services/instagram.service");
 const ApiResponse = require("../../utils/ApiResponse");
 const ApiError = require("../../utils/ApiError");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -86,9 +87,17 @@ const updateCmsSection = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok(updated.value, "CMS section updated successfully"));
 });
 
+// POST /api/admin/cms/instagram/sync-reels
+// Pulls the latest Instagram reels into cmsMarquee.reels (re-hosting media).
+const syncInstagramReels = asyncHandler(async (req, res) => {
+  const value = await syncReelsToCms({ limit: 3 });
+  res.json(ApiResponse.ok(value, "Instagram reels synced"));
+});
+
 module.exports = {
   uploadCmsImage,
   uploadCmsVideo,
   getCmsSection,
   updateCmsSection,
+  syncInstagramReels,
 };

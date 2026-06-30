@@ -69,6 +69,7 @@ const start = async () => {
   require("./src/jobs/loyaltyExpiry");
   require("./src/jobs/createShiprocketOrder");
   require("./src/jobs/expireStaleOrders");
+  require("./src/jobs/syncInstagramReels");
   await agenda.start();
 
   // Sweep stale unconfirmed COD orders hourly.
@@ -87,6 +88,14 @@ const start = async () => {
   const existingExpiry = await agenda.jobs({ name: "expire-loyalty-points" });
   if (existingExpiry.length === 0) {
     await agenda.every("24 hours", "expire-loyalty-points");
+  }
+
+  // Sync Instagram reels daily (only meaningful when IG creds are configured).
+  if (process.env.IG_USER_ID && process.env.IG_ACCESS_TOKEN) {
+    const existingIgSync = await agenda.jobs({ name: "sync-instagram-reels" });
+    if (existingIgSync.length === 0) {
+      await agenda.every("24 hours", "sync-instagram-reels");
+    }
   }
 
   // Recover any newsletter campaigns that were stuck in "sending" when the
