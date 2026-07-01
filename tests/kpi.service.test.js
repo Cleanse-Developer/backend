@@ -23,6 +23,48 @@ t("explicit range → equal-length previous window ending at current start", () 
   assert.strictEqual(r.prevFrom.getTime(), r.from.getTime() - 10 * DAY);
 });
 
+t("default compareMode is prev", () => {
+  const r = resolveRange({ dateFrom: "2026-06-01", dateTo: "2026-07-01" });
+  assert.strictEqual(r.compareMode, "prev");
+});
+
+t("compareMode=none → zero-length comparison window", () => {
+  const r = resolveRange({ dateFrom: "2026-06-01", dateTo: "2026-07-01", compareMode: "none" });
+  assert.strictEqual(r.compareMode, "none");
+  assert.strictEqual(r.prevFrom.getTime(), r.from.getTime());
+  assert.strictEqual(r.prevTo.getTime(), r.from.getTime());
+});
+
+t("compareMode=previous_year → same window shifted back one year", () => {
+  const r = resolveRange({ dateFrom: "2026-06-01", dateTo: "2026-07-01", compareMode: "previous_year" });
+  assert.strictEqual(r.prevFrom.toISOString().slice(0, 10), "2025-06-01");
+  assert.strictEqual(r.prevTo.toISOString().slice(0, 10), "2025-07-01");
+});
+
+t("compareMode=lifetime → comparison window starts at epoch", () => {
+  const r = resolveRange({ dateFrom: "2026-06-01", dateTo: "2026-07-01", compareMode: "lifetime" });
+  assert.strictEqual(r.prevFrom.getTime(), 0);
+  assert.ok(r.prevTo.getTime() > r.prevFrom.getTime());
+});
+
+t("compareMode=custom → explicit comparison window (month vs month)", () => {
+  const r = resolveRange({
+    dateFrom: "2026-06-01",
+    dateTo: "2026-07-01",
+    compareMode: "custom",
+    compareFrom: "2026-02-01",
+    compareTo: "2026-03-01",
+  });
+  assert.strictEqual(r.prevFrom.toISOString().slice(0, 10), "2026-02-01");
+  assert.strictEqual(r.prevTo.toISOString().slice(0, 10), "2026-03-01");
+});
+
+t("compareFrom/compareTo without compareMode implies custom", () => {
+  const r = resolveRange({ dateFrom: "2026-06-01", dateTo: "2026-07-01", compareFrom: "2026-01-01", compareTo: "2026-02-01" });
+  assert.strictEqual(r.compareMode, "custom");
+  assert.strictEqual(r.prevFrom.toISOString().slice(0, 10), "2026-01-01");
+});
+
 t("groupBy auto: <=31d → day, <=180d → week, else month", () => {
   assert.strictEqual(resolveRange({ dateFrom: "2026-06-01", dateTo: "2026-06-20" }).groupBy, "day");
   assert.strictEqual(resolveRange({ dateFrom: "2026-01-01", dateTo: "2026-04-01" }).groupBy, "week");

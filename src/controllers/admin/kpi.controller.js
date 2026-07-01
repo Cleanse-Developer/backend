@@ -14,63 +14,14 @@ const LoyaltyTransaction = require("../../models/LoyaltyTransaction");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
 const kpi = require("../../services/kpi.service");
+const { buildReportBundle } = require("../../services/report.service");
+const { generateReportNarrative } = require("../../ai/report");
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const aov = (revenue, orders) => (orders > 0 ? revenue / orders : 0);
-const margin = (profit, revenue) =>
-  revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0;
 
-// Sum the deductible cash costs for a window. Discounts are NOT deducted here:
-// pricing.total is already net of discounts, so subtracting them again would
-// double-count. They are surfaced separately in /discounts.
-async function profitBreakdown(from, to, cfg, spanDays) {
-  const [totals, cogs, mix, refunds, shippingAgg] = await Promise.all([
-    kpi.salesTotals(from, to),
-    kpi.computeCogs(from, to, cfg),
-    kpi.paymentMix(from, to),
-    kpi.refundStats(from, to),
-    Order.aggregate([
-      { $match: kpi.paidMatch(from, to) },
-      { $group: { _id: null, shipping: { $sum: "$pricing.shippingCost" } } },
-    ]),
-  ]);
-
-  const revenue = totals.revenue;
-  const orders = totals.orders;
-
-  const packaging = (Number(cfg.packagingCostPerOrder) || 0) * orders;
-  const shipping =
-    cfg.shippingCostMode === "flat"
-      ? (Number(cfg.flatShippingPerOrder) || 0) * orders
-      : shippingAgg[0]?.shipping || 0;
-  const warehouse =
-    (Number(cfg.warehouseMonthlyCost) || 0) * (spanDays / 30);
-  const gatewayFees = mix.reduce(
-    (s, m) =>
-      s + (m.revenue * (Number(cfg.gatewayFeePercent[m.method]) || 0)) / 100,
-    0
-  );
-
-  const grossProfit = revenue - cogs;
-  const netProfit =
-    grossProfit - packaging - shipping - warehouse - gatewayFees - refunds.amount;
-
-  return {
-    revenue: round(revenue),
-    cogs: round(cogs),
-    grossProfit: round(grossProfit),
-    costs: {
-      packaging: round(packaging),
-      shipping: round(shipping),
-      warehouse: round(warehouse),
-      gatewayFees: round(gatewayFees),
-      refunds: round(refunds.amount),
-    },
-    netProfit: round(netProfit),
-    netProfitMargin: margin(netProfit, revenue),
-    orders,
-  };
-}
+// P&L breakdown now lives in kpi.service (reused by the report). Local alias:
+const profitBreakdown = kpi.profitBreakdown;
 
 // GET /api/admin/dashboard/kpi/summary
 const getSummary = asyncHandler(async (req, res) => {
@@ -487,6 +438,14 @@ const getQuickActions = asyncHandler(async (req, res) => {
   );
 });
 
+// GET /api/admin/dashboard/kpi/report
+// Full KPI bundle + Gemini-written narrative for the exportable PDF/XLSX report.
+const getReport = asyncHandler(async (req, res) => {
+  const bundle = await buildReportBundle(req.query);
+  const narrative = await generateReportNarrative(bundle);
+  res.json(ApiResponse.ok({ ...bundle, narrative }));
+});
+
 module.exports = {
   getSummary,
   getSalesTrend,
@@ -499,4 +458,5 @@ module.exports = {
   getCustomers,
   getInventory,
   getQuickActions,
+  getReport,
 };

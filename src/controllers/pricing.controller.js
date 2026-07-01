@@ -13,7 +13,7 @@ const { calculatePricing } = require("../services/pricing.service");
  * Body: { items: [{ productId, quantity, selectedSize? }], couponCode?, giftWrap? }
  */
 const guestPricing = asyncHandler(async (req, res) => {
-  const { items, couponCode, specialCouponCode, giftWrap } = req.body;
+  const { items, couponCode, specialCouponCode, giftWrap, paymentMethod, pincode, state } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     throw ApiError.badRequest("items array is required and must not be empty");
@@ -66,7 +66,10 @@ const guestPricing = asyncHandler(async (req, res) => {
     couponCode || null,
     null, // no userId for guest
     giftWrap || false,
-    specialCouponCode || null
+    specialCouponCode || null,
+    0, // guest cannot redeem loyalty points
+    { pincode, state },
+    paymentMethod
   );
 
   res.json(ApiResponse.ok({ pricing }));

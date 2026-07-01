@@ -125,7 +125,8 @@ const initiateCheckout = asyncHandler(async (req, res) => {
     giftWrap || false,
     specialCouponCode || null,
     Number(loyaltyPointsToRedeem) || 0,
-    { pincode: shippingInfo?.pincode, state: shippingInfo?.state }
+    { pincode: shippingInfo?.pincode, state: shippingInfo?.state },
+    "razorpay"
   );
 
   const amountInPaise = Math.round(pricing.total * 100);

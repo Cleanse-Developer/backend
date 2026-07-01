@@ -133,6 +133,9 @@ const previewPricing = asyncHandler(async (req, res) => {
     giftWrap,
     specialCouponCode,
     loyaltyPointsToRedeem = 0,
+    paymentMethod,
+    pincode,
+    state,
   } = req.body;
 
   const cart = await Cart.findOne({ user: req.user._id }).populate(
@@ -149,7 +152,9 @@ const previewPricing = asyncHandler(async (req, res) => {
     req.user._id,
     giftWrap != null ? giftWrap : cart.giftWrap,
     specialCouponCode || null,
-    Number(loyaltyPointsToRedeem) || 0
+    Number(loyaltyPointsToRedeem) || 0,
+    { pincode, state },
+    paymentMethod
   );
 
   res.json(ApiResponse.ok({ pricing }));

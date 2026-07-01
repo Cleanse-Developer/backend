@@ -48,13 +48,31 @@ const checkDelivery = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/shipping/config
- * Public — returns the active standard shipping rate + free-shipping threshold
- * so the cart can display real (admin-configured) shipping instead of hardcoded
- * values. Optional ?pincode= / ?state= narrows to a specific zone.
+ * Public — returns the active shipping rate + free-shipping threshold so the
+ * storefront can display real (admin-configured) shipping. Optional ?pincode= /
+ * ?state= narrows to a specific zone.
+ *
+ * With ?method=cod|razorpay → the single resolved config for that method.
+ * Without ?method → a per-method breakdown { prepaid, cod, zone } PLUS prepaid's
+ * fields promoted to the top level ({ standardRate, freeAbove }) so existing
+ * callers that read the flat shape keep working.
  */
 const getShippingConfig = asyncHandler(async (req, res) => {
-  const { pincode, state } = req.query;
-  const config = await resolveShippingConfig({ pincode, state });
+  const { pincode, state, method } = req.query;
+  const location = { pincode, state };
+
+  if (method) {
+    const config = await resolveShippingConfig(location, method);
+    return res.status(200).json(new ApiResponse(200, config));
+  }
+
+  const [prepaid, cod] = await Promise.all([
+    resolveShippingConfig(location, "prepaid"),
+    resolveShippingConfig(location, "cod"),
+  ]);
+  // Promote prepaid to the top level for back-compat; expose both methods for
+  // the storefront's "delivery charges" info tooltip.
+  const config = { ...prepaid, prepaid, cod, zone: prepaid.zone };
   res.status(200).json(new ApiResponse(200, config));
 });
 

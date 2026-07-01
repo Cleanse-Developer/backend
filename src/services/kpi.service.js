@@ -19,10 +19,22 @@ const DEFAULT_COST_CONFIG = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Resolve a query (?dateFrom&dateTo&groupBy) into the current window, the
-// equal-length window immediately preceding it (for period-over-period deltas),
-// and a sensible groupBy bucket. Defaults to the current calendar month.
-// Windows are half-open: [from, to) and [prevFrom, prevTo) with prevTo === from.
+// Shift a Date back by whole years (handles leap-day gracefully via setFullYear).
+function minusYears(date, years) {
+  const d = new Date(date.getTime());
+  d.setFullYear(d.getFullYear() - years);
+  return d;
+}
+
+// Resolve a query into the current window, a comparison window, and a groupBy.
+// Primary window: ?dateFrom&dateTo&groupBy (defaults to the current calendar month).
+// Comparison window driven by ?compareMode (+ ?compareFrom/?compareTo for custom):
+//   prev (default)  -> equal-length window immediately before the primary one
+//   previous_year   -> the same window shifted back one year
+//   lifetime        -> all-time [epoch, now] (raw lifetime total)
+//   custom          -> explicit [compareFrom, compareTo); also implied when those are set
+//   none            -> zero-length window (0 baseline -> compare() shows no delta)
+// Windows are half-open: [from, to) and [prevFrom, prevTo).
 function resolveRange(query = {}) {
   const now = new Date();
   const to = query.dateTo ? new Date(query.dateTo) : now;
@@ -31,8 +43,37 @@ function resolveRange(query = {}) {
     : new Date(to.getFullYear(), to.getMonth(), 1);
 
   const span = Math.max(0, to.getTime() - from.getTime());
-  const prevTo = new Date(from.getTime());
-  const prevFrom = new Date(from.getTime() - span);
+
+  let compareMode = query.compareMode;
+  if (!compareMode) compareMode = query.compareFrom ? "custom" : "prev";
+
+  let prevFrom;
+  let prevTo;
+  switch (compareMode) {
+    case "none":
+      // Zero-length window -> aggregates to 0 -> compare() yields deltaPct: null.
+      prevFrom = new Date(from.getTime());
+      prevTo = new Date(from.getTime());
+      break;
+    case "previous_year":
+      prevFrom = minusYears(from, 1);
+      prevTo = minusYears(to, 1);
+      break;
+    case "lifetime":
+      prevFrom = new Date(0);
+      prevTo = new Date(now.getTime());
+      break;
+    case "custom":
+      prevFrom = query.compareFrom ? new Date(query.compareFrom) : new Date(from.getTime());
+      prevTo = query.compareTo ? new Date(query.compareTo) : new Date(to.getTime());
+      break;
+    case "prev":
+    default:
+      compareMode = "prev";
+      prevTo = new Date(from.getTime());
+      prevFrom = new Date(from.getTime() - span);
+      break;
+  }
 
   const days = span / DAY_MS;
   let groupBy = query.groupBy;
@@ -40,7 +81,7 @@ function resolveRange(query = {}) {
     groupBy = days <= 31 ? "day" : days <= 180 ? "week" : "month";
   }
 
-  return { from, to, prevFrom, prevTo, groupBy, spanDays: days };
+  return { from, to, prevFrom, prevTo, groupBy, spanDays: days, compareMode };
 }
 
 // Build a { value, previous, deltaPct, direction } comparison object.
@@ -283,6 +324,60 @@ async function refundStats(from, to) {
   return { refundedOrders: r?.refundedOrders || 0, amount: r?.amount || 0 };
 }
 
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const marginPct = (profit, revenue) =>
+  revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0;
+
+// Full P&L breakdown for a window. Discounts are NOT deducted here: pricing.total
+// is already net of discounts, so subtracting them again would double-count.
+async function profitBreakdown(from, to, cfg, spanDays) {
+  const [totals, cogs, mix, refunds, shippingAgg] = await Promise.all([
+    salesTotals(from, to),
+    computeCogs(from, to, cfg),
+    paymentMix(from, to),
+    refundStats(from, to),
+    Order.aggregate([
+      { $match: paidMatch(from, to) },
+      { $group: { _id: null, shipping: { $sum: "$pricing.shippingCost" } } },
+    ]),
+  ]);
+
+  const revenue = totals.revenue;
+  const orders = totals.orders;
+
+  const packaging = (Number(cfg.packagingCostPerOrder) || 0) * orders;
+  const shipping =
+    cfg.shippingCostMode === "flat"
+      ? (Number(cfg.flatShippingPerOrder) || 0) * orders
+      : shippingAgg[0]?.shipping || 0;
+  const warehouse = (Number(cfg.warehouseMonthlyCost) || 0) * (spanDays / 30);
+  const gatewayFees = mix.reduce(
+    (s, m) =>
+      s + (m.revenue * (Number(cfg.gatewayFeePercent[m.method]) || 0)) / 100,
+    0
+  );
+
+  const grossProfit = revenue - cogs;
+  const netProfit =
+    grossProfit - packaging - shipping - warehouse - gatewayFees - refunds.amount;
+
+  return {
+    revenue: round2(revenue),
+    cogs: round2(cogs),
+    grossProfit: round2(grossProfit),
+    costs: {
+      packaging: round2(packaging),
+      shipping: round2(shipping),
+      warehouse: round2(warehouse),
+      gatewayFees: round2(gatewayFees),
+      refunds: round2(refunds.amount),
+    },
+    netProfit: round2(netProfit),
+    netProfitMargin: marginPct(netProfit, revenue),
+    orders,
+  };
+}
+
 module.exports = {
   COST_CONFIG_KEY,
   DEFAULT_COST_CONFIG,
@@ -297,4 +392,5 @@ module.exports = {
   paymentFailureRate,
   salesTrend,
   refundStats,
+  profitBreakdown,
 };

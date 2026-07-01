@@ -211,36 +211,51 @@ const calculateBundleDiscounts = async (cartItems) => {
  *   3. GLOBAL SHIPPING constants (rate + free threshold)
  *
  * @param {{ pincode?: string, state?: string } | null} location
- * @param {number} defaultFreeAbove - Free-shipping threshold to use when no zone
- *   matches. Defaults to the SHIPPING constant, but callers (pricing) pass the
- *   admin-configured free_shipping tier threshold so the two stay in sync.
+ * @param {string} paymentMethod - "cod" | "razorpay" | "upi" | null. Selects the
+ *   per-method rate/threshold bucket ("cod" vs "prepaid"). Unknown → prepaid.
  * @returns {Promise<{ standardRate: number, freeAbove: number, zone: string|null }>}
  */
-// Global standard shipping rate from admin Settings (key "SHIPPING"), falling
-// back to the constant. This is the rate used when the address is in no zone.
-const getGlobalStandardRate = async () => {
+// Normalize a payment method into a shipping bucket. COD has its own rate +
+// free threshold; everything else (razorpay, upi, null) is treated as prepaid.
+const normalizeMethod = (method) => (method === "cod" ? "cod" : "prepaid");
+
+// Global per-method shipping (rate + free threshold) from admin Settings (key
+// "SHIPPING"). Current shape: { prepaid: {STANDARD_RATE, FREE_THRESHOLD}, cod: {…} }.
+// Falls back to the legacy flat shape ({STANDARD_RATE, FREE_THRESHOLD}), then to
+// the hardcoded SHIPPING constants — so pre-split installs keep working.
+const getGlobalShipping = async (method) => {
   const doc = await Settings.findOne({ key: "SHIPPING" }).lean();
-  const rate = Number(doc?.value?.STANDARD_RATE);
-  return Number.isFinite(rate) ? rate : SHIPPING.STANDARD_RATE;
+  const val = doc?.value || {};
+  const bucket = val[method] || {};
+
+  const rate = Number(bucket.STANDARD_RATE ?? val.STANDARD_RATE);
+  const free = Number(bucket.FREE_THRESHOLD ?? val.FREE_THRESHOLD);
+
+  return {
+    standardRate: Number.isFinite(rate) ? rate : SHIPPING.STANDARD_RATE,
+    freeAbove: Number.isFinite(free) ? free : SHIPPING.FREE_THRESHOLD,
+  };
 };
 
-const resolveShippingConfig = async (
-  location = null,
-  defaultFreeAbove = SHIPPING.FREE_THRESHOLD
-) => {
-  const globalRate = await getGlobalStandardRate();
-  const global = { standardRate: globalRate, freeAbove: defaultFreeAbove, zone: null };
+const resolveShippingConfig = async (location = null, paymentMethod = "prepaid") => {
+  const method = normalizeMethod(paymentMethod);
+  const global = await getGlobalShipping(method);
+  const globalConfig = {
+    standardRate: global.standardRate,
+    freeAbove: global.freeAbove,
+    zone: null,
+  };
 
   const pincode = location?.pincode ? String(location.pincode).trim() : null;
   const state = location?.state ? String(location.state).trim().toLowerCase() : null;
 
   // No location to match on → global.
-  if (!pincode && !state) return global;
+  if (!pincode && !state) return globalConfig;
 
   const zones = await ShippingZone.find({ isActive: true })
     .select("name pincodes states rates")
     .lean();
-  if (!zones.length) return global;
+  if (!zones.length) return globalConfig;
 
   // Pincode match first (precise), then state-wide zone. No match → global.
   const zone =
@@ -249,11 +264,15 @@ const resolveShippingConfig = async (
       zones.find((z) => z.states?.some((s) => s.trim().toLowerCase() === state))) ||
     null;
 
-  if (!zone) return global;
+  if (!zone) return globalConfig;
 
+  const r = zone.rates || {};
+  const methodRates = r[method] || {};
+  // Per-method zone rate wins; else the zone's legacy standard/freeAbove; else
+  // the resolved global per-method value.
   return {
-    standardRate: zone.rates?.standard ?? globalRate,
-    freeAbove: zone.rates?.freeAbove ?? defaultFreeAbove,
+    standardRate: methodRates.standard ?? r.standard ?? global.standardRate,
+    freeAbove: methodRates.freeAbove ?? r.freeAbove ?? global.freeAbove,
     zone: zone.name || null,
   };
 };
@@ -288,7 +307,8 @@ const calculatePricing = async (
   giftWrap = false,
   specialCouponCode = null,
   loyaltyPointsToRedeem = 0,
-  shippingLocation = null
+  shippingLocation = null,
+  paymentMethod = "prepaid"
 ) => {
   // 1. Calculate subtotal
   const subtotal = cart.items.reduce((sum, item) => {
@@ -327,17 +347,16 @@ const calculatePricing = async (
   // Effective subtotal after bundles + tier
   const effectiveAfterBundleTier = Math.max(0, subtotal - bundleDiscountTotal - tierDiscount);
 
-  // Shipping cost (base, before any adjustments) — rate comes from the
-  // admin-configured ShippingZone; the default free-shipping threshold comes from
-  // the free_shipping tier (when tiers enabled), so the tier bar and actual free
-  // shipping stay in sync. A matched zone's freeAbove still overrides.
-  const freeShipTier = tierCfg.enabled
-    ? tierCfg.tiers.find((t) => t.type === "free_shipping")
-    : null;
-  const defaultFreeAbove = freeShipTier?.threshold ?? SHIPPING.FREE_THRESHOLD;
+  // Shipping cost (base, before any adjustments). Rate + free-shipping threshold
+  // come from the admin-configured per-method shipping config (global Settings
+  // "SHIPPING" → matched ShippingZone), selected by paymentMethod (cod vs prepaid).
+  // NOTE: the cart progress bar's "free shipping" milestone is still driven by
+  // discount_tier_config (see calculateTierProgress) and is method-agnostic, so it
+  // may differ from the actual per-method freeAbove resolved here — the resolved
+  // value is always authoritative for the charge.
   const { standardRate, freeAbove } = await resolveShippingConfig(
     shippingLocation,
-    defaultFreeAbove
+    paymentMethod
   );
   const baseShippingCost = subtotal >= freeAbove ? 0 : standardRate;
 

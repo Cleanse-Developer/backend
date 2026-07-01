@@ -11,6 +11,7 @@ const {
   getCustomers,
   getInventory,
   getQuickActions,
+  getReport,
 } = require("../../controllers/admin/kpi.controller");
 
 const router = Router();
@@ -26,5 +27,6 @@ router.get("/discounts", getDiscounts);
 router.get("/customers", getCustomers);
 router.get("/inventory", getInventory);
 router.get("/quick-actions", getQuickActions);
+router.get("/report", getReport);
 
 module.exports = router;

@@ -70,7 +70,8 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
     giftWrap,
     specialCouponCode,
     Number(loyaltyPointsToRedeem) || 0,
-    { pincode: shippingInfo?.pincode, state: shippingInfo?.state }
+    { pincode: shippingInfo?.pincode, state: shippingInfo?.state },
+    "razorpay"
   );
 
   // Create Razorpay order (amount in paise)
@@ -149,7 +150,8 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     giftWrap,
     specialCouponCode,
     Number(loyaltyPointsToRedeem) || 0,
-    { pincode: shippingInfo?.pincode, state: shippingInfo?.state }
+    { pincode: shippingInfo?.pincode, state: shippingInfo?.state },
+    "razorpay"
   );
 
   // Generate order ID

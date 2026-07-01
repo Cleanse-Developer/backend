@@ -17,12 +17,14 @@ const settings = [
     },
   },
   {
-    key: "shipping_free_threshold",
-    value: 1200,
-  },
-  {
-    key: "shipping_standard_rate",
-    value: 99,
+    // Global delivery charges, per payment method. Read by pricing.service
+    // getGlobalShipping(); overridden per zone by ShippingZone.rates[method].
+    // Admin edits this via the /shipping page (adminSettingsApi key "SHIPPING").
+    key: "SHIPPING",
+    value: {
+      prepaid: { STANDARD_RATE: 99, FREE_THRESHOLD: 1200 },
+      cod: { STANDARD_RATE: 99, FREE_THRESHOLD: 1200 },
+    },
   },
   {
     key: "gift_wrap_cost",
@@ -84,8 +86,18 @@ const seedSettings = async () => {
   for (const s of settings) {
     await Settings.findOneAndUpdate({ key: s.key }, s, { upsert: true });
   }
-  // Remove legacy/orphaned tier keys replaced by discount_tier_config
-  await Settings.deleteMany({ key: { $in: ["discount_tiers", "DISCOUNT_TIERS"] } });
+  // Remove legacy/orphaned keys: tier keys replaced by discount_tier_config, and
+  // flat shipping keys replaced by the nested "SHIPPING" per-method config.
+  await Settings.deleteMany({
+    key: {
+      $in: [
+        "discount_tiers",
+        "DISCOUNT_TIERS",
+        "shipping_standard_rate",
+        "shipping_free_threshold",
+      ],
+    },
+  });
   console.log(`  ✓ ${settings.length} settings seeded`);
 };
 

@@ -11,6 +11,8 @@ const listCoupons = asyncHandler(async (req, res) => {
     limit = 20,
     status,
     search,
+    source,
+    expired,
   } = req.query;
 
   const filter = {};
@@ -26,8 +28,25 @@ const listCoupons = asyncHandler(async (req, res) => {
   }
   // "all" or no status: no filter
 
-  if (search) {
-    filter.code = { $regex: search, $options: "i" };
+  // Time-based expiry filter (independent of isActive)
+  if (expired === "true") {
+    filter.validTill = { $lt: new Date() };
+  } else if (expired === "false") {
+    filter.validTill = { $gte: new Date() };
+  }
+
+  // Source split via code prefix. Spin-wheel coupons are code "SPIN-...";
+  // "general" = everything else (manual + newsletter + referral).
+  const SPIN_PREFIX = { $regex: "^SPIN-", $options: "i" };
+  const codeConds = [];
+  if (search) codeConds.push({ $regex: search, $options: "i" });
+  if (source === "spin") codeConds.push(SPIN_PREFIX);
+  else if (source === "general") codeConds.push({ $not: SPIN_PREFIX });
+
+  if (codeConds.length === 1) {
+    filter.code = codeConds[0];
+  } else if (codeConds.length > 1) {
+    filter.$and = codeConds.map((c) => ({ code: c }));
   }
 
   const pageNum = Math.max(1, Number(page));
