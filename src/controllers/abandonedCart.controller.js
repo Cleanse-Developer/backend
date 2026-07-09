@@ -8,6 +8,12 @@ const POPULATE_PRODUCT = {
   select: "name slug price images tag",
 };
 
+// User contact details for recovery outreach.
+const POPULATE_USER = {
+  path: "user",
+  select: "fullName email phone",
+};
+
 /**
  * GET /api/public/abandoned-carts  (PUBLIC — no auth)
  *
@@ -41,6 +47,7 @@ const listAbandonedCarts = asyncHandler(async (req, res) => {
       .sort({ updatedAt: -1 })
       .skip(offset)
       .limit(limit)
+      .populate(POPULATE_USER)
       .populate(POPULATE_PRODUCT)
       .lean(),
   ]);
