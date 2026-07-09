@@ -48,6 +48,9 @@ app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "Cleanse Ayurveda API is running" });
 });
 
+// Public promoter link redirect (short shareable URLs: /r/:slug)
+app.use("/r", require("./src/routes/promoterPublic.routes"));
+
 // API routes
 app.use("/api", routes);
 
@@ -70,6 +73,7 @@ const start = async () => {
   require("./src/jobs/createShiprocketOrder");
   require("./src/jobs/expireStaleOrders");
   require("./src/jobs/syncInstagramReels");
+  require("./src/jobs/promoterCommissionApproval");
   await agenda.start();
 
   // Sweep stale unconfirmed COD orders hourly.
@@ -88,6 +92,13 @@ const start = async () => {
   const existingExpiry = await agenda.jobs({ name: "expire-loyalty-points" });
   if (existingExpiry.length === 0) {
     await agenda.every("24 hours", "expire-loyalty-points");
+  }
+
+  // Schedule daily promoter-commission approval sweep (pending → approved after
+  // the delivery return window).
+  const existingApproval = await agenda.jobs({ name: "approve-promoter-commissions" });
+  if (existingApproval.length === 0) {
+    await agenda.every("24 hours", "approve-promoter-commissions");
   }
 
   // Sync Instagram reels daily (only meaningful when IG creds are configured).

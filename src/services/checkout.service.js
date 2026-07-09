@@ -10,6 +10,10 @@ const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const { createOrderId } = require("./order.service");
 const { awardPoints, redeemPoints } = require("./loyalty.service");
 const { processReferralReward } = require("./referral.service");
+const {
+  resolveOrderAttribution,
+  accrueCommission,
+} = require("./promoter.service");
 const { sendOrderConfirmation } = require("./email.service");
 const ApiError = require("../utils/ApiError");
 
@@ -54,6 +58,13 @@ const createOrderFromSession = async (session, paymentDetails, mongoSession) => 
 
   const isRazorpay = paymentDetails.method === "razorpay";
 
+  // Promoter attribution from the frozen session (code-based via pricing, or
+  // last-click link via session.affiliateRef). null for organic orders.
+  const attribution = await resolveOrderAttribution(
+    session.pricing,
+    session.affiliateRef
+  );
+
   // Create Order document
   const [order] = await Order.create(
     [
@@ -66,6 +77,7 @@ const createOrderFromSession = async (session, paymentDetails, mongoSession) => 
           ? session.shippingAddress
           : session.billingAddress,
         billingSameAsShipping: session.billingSameAsShipping,
+        ...(attribution ? { attribution } : {}),
         paymentSession: session._id,
         payment: {
           method: paymentDetails.method,
@@ -277,6 +289,13 @@ const postOrderActions = async (order, session) => {
     await processReferralReward(order._id, session.user);
   } catch (err) {
     console.error("Referral reward error:", err.message);
+  }
+
+  // Accrue promoter commission for attributed orders (best-effort)
+  try {
+    await accrueCommission(order);
+  } catch (err) {
+    console.error("Commission accrual error:", err.message);
   }
 
   // Queue adhoc Shiprocket order creation (best-effort, non-blocking).

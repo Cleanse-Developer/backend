@@ -7,6 +7,7 @@ const ApiError = require("../utils/ApiError");
 const { issueRefund } = require("./razorpay.service");
 const { reversePoints } = require("./loyalty.service");
 const { reverseReferralReward } = require("./referral.service");
+const { reverseCommission } = require("./promoter.service");
 
 /**
  * Restore stock for every non-gift line item of an order and recompute each
@@ -85,6 +86,7 @@ const reverseOrderRewards = async (order) => {
     }
 
     await reverseReferralReward(order._id);
+    await reverseCommission(order._id);
   } catch (reversalErr) {
     console.error(`Reversal error for order ${order.orderId}:`, reversalErr.message);
   }

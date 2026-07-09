@@ -7,6 +7,7 @@ const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const generateOrderId = require("../utils/generateOrderId");
 const { awardPoints } = require("./loyalty.service");
 const { processReferralReward } = require("./referral.service");
+const { accrueCommission } = require("./promoter.service");
 const whatsappService = require("./whatsapp.service");
 const { sendOrderConfirmation } = require("./email.service");
 
@@ -41,6 +42,12 @@ const runCodPostActions = async (order) => {
     await processReferralReward(order._id, order.user);
   } catch (err) {
     console.error(`[COD] referral reward failed for ${order.orderId}:`, err.message);
+  }
+
+  try {
+    await accrueCommission(order);
+  } catch (err) {
+    console.error(`[COD] commission accrual failed for ${order.orderId}:`, err.message);
   }
 
   try {

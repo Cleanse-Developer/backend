@@ -97,6 +97,12 @@ const paymentSessionSchema = new mongoose.Schema(
 
     couponCode: { type: String, default: null },
     specialCouponCode: { type: String, default: null },
+    // Frozen last-click promoter attribution (from the storefront's stored
+    // cookie/localStorage). The webhook order-create path has no request cookie,
+    // so this must be captured at checkout initiation and frozen here.
+    affiliateRef: {
+      slug: { type: String, default: null },
+    },
     giftWrap: { type: Boolean, default: false },
     giftMessage: { type: String, maxlength: 200 },
 

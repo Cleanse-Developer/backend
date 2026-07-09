@@ -37,10 +37,18 @@ const couponSchema = new mongoose.Schema(
     ],
     isActive: { type: Boolean, default: true },
     isFirstOrderOnly: { type: Boolean, default: false },
+    // External promoter that owns this code (null for regular/customer coupons).
+    // Orders using this code are attributed to the promoter for commission.
+    promoter: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Promoter",
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
 couponSchema.index({ isActive: 1, validTill: 1 });
+couponSchema.index({ promoter: 1 }, { sparse: true });
 
 module.exports = mongoose.model("Coupon", couponSchema);

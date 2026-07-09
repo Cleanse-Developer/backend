@@ -174,6 +174,29 @@ const orderSchema = new mongoose.Schema(
     contactEmail: { type: String },
     contactPhone: { type: String },
     loyaltyPointsEarned: { type: Number, default: 0 },
+    // External-promoter attribution. Set at order creation when the order used a
+    // promoter-owned coupon code (via="code") or came through a promoter link
+    // (via="link"). Drives commission accrual/reversal. Absent for organic orders.
+    // The snapshot fields are frozen at creation so later promoter edits never
+    // rewrite historical commission.
+    attribution: {
+      promoter: { type: mongoose.Schema.Types.ObjectId, ref: "Promoter" },
+      via: { type: String, enum: ["code", "link"] },
+      code: { type: String },
+      link: { type: mongoose.Schema.Types.ObjectId, ref: "PromoterLink" },
+      commissionSnapshot: {
+        type: { type: String },
+        rate: { type: Number },
+        basis: { type: String },
+      },
+      basisAmount: { type: Number },
+      commissionAmount: { type: Number },
+      status: {
+        type: String,
+        enum: ["pending", "confirmed", "reversed"],
+        default: "pending",
+      },
+    },
     // COD WhatsApp approval tracking. Present only on held COD orders.
     // "awaiting" → confirmation sent, order on hold (no Shiprocket/loyalty yet);
     // "confirmed" / "cancelled" set when the customer responds (webhook/admin).
@@ -190,6 +213,7 @@ const orderSchema = new mongoose.Schema(
 
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ status: 1 });
+orderSchema.index({ "attribution.promoter": 1, createdAt: -1 }, { sparse: true });
 orderSchema.index({ "payment.status": 1 });
 orderSchema.index({ createdAt: -1 });
 

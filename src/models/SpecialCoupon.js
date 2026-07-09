@@ -183,11 +183,18 @@ const specialCouponSchema = new mongoose.Schema(
     // --- Metadata ---
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     notes: { type: String, maxlength: 1000 },
+    // External promoter that owns this code (null for regular promotions).
+    promoter: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Promoter",
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
 specialCouponSchema.index({ isActive: 1, validTill: 1 });
+specialCouponSchema.index({ promoter: 1 }, { sparse: true });
 specialCouponSchema.index({ applicationMethod: 1, isActive: 1, validFrom: 1, validTill: 1 });
 specialCouponSchema.index({ code: 1 }, { sparse: true });
 specialCouponSchema.index({ promotionType: 1 });

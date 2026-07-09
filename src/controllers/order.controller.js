@@ -15,6 +15,10 @@ const env = require("../config/env");
 const { calculatePricing } = require("../services/pricing.service");
 const { reversePoints } = require("../services/loyalty.service");
 const { reverseReferralReward } = require("../services/referral.service");
+const {
+  resolveOrderAttribution,
+  reverseCommission,
+} = require("../services/promoter.service");
 const { enrichSpecialDiscounts } = require("../services/checkout.service");
 const { validateStock, reserveStock } = require("../services/stock.service");
 const { backfillUserProfile } = require("../services/profile.service");
@@ -147,6 +151,10 @@ const placeOrder = asyncHandler(async (req, res) => {
     await reserveStock(stockItems, mongoSession);
 
     // 2. Create order
+    // Promoter attribution — code-based (from pricing) or last-click link (from
+    // the request body). null for organic orders. Frozen onto the order.
+    const attribution = await resolveOrderAttribution(pricing, req.body.attribution);
+
     [order] = await Order.create(
       [
         {
@@ -156,6 +164,7 @@ const placeOrder = asyncHandler(async (req, res) => {
           shippingAddress: shippingInfo,
           billingAddress: billingSameAsShipping ? shippingInfo : billingInfo,
           billingSameAsShipping,
+          ...(attribution ? { attribution } : {}),
           payment: {
             method: "cod",
             status: "pending",
@@ -574,6 +583,9 @@ const cancelOrder = asyncHandler(async (req, res) => {
 
     // Reverse referral reward if this was the qualifying order
     await reverseReferralReward(order._id);
+
+    // Reverse any promoter commission accrued for this order
+    await reverseCommission(order._id);
   } catch (reversalErr) {
     // Log but don't fail the cancellation. The order is already cancelled
     // and refund is recorded. Reversals can be handled manually.

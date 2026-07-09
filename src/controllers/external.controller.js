@@ -10,6 +10,7 @@ const ApiResponse = require("../utils/ApiResponse");
 const { logActivity, ACTORS } = require("../utils/orderActivity");
 const { reversePoints } = require("../services/loyalty.service");
 const { reverseReferralReward } = require("../services/referral.service");
+const { reverseCommission } = require("../services/promoter.service");
 const {
   cancelOrder: cancelShiprocketOrder,
   cancelShipment: cancelShiprocketShipment,
@@ -286,6 +287,9 @@ const cancelOrderByOrderId = asyncHandler(async (req, res) => {
 
     // Reverse referral reward if this was the qualifying order.
     await reverseReferralReward(order._id);
+
+    // Reverse any promoter commission accrued for this order.
+    await reverseCommission(order._id);
   } catch (reversalErr) {
     console.error(`Reversal error for order ${order.orderId}:`, reversalErr.message);
   }

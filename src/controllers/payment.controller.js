@@ -15,6 +15,10 @@ const { createOrderId } = require("../services/order.service");
 const { calculatePricing } = require("../services/pricing.service");
 const { awardPoints, redeemPoints } = require("../services/loyalty.service");
 const { processReferralReward } = require("../services/referral.service");
+const {
+  resolveOrderAttribution,
+  accrueCommission,
+} = require("../services/promoter.service");
 const { sendOrderConfirmation } = require("../services/email.service");
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
@@ -207,6 +211,9 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     }
   }
 
+  // Promoter attribution — code-based (pricing) or last-click link (request body).
+  const attribution = await resolveOrderAttribution(pricing, req.body.attribution);
+
   // Create order
   let order;
   try {
@@ -217,6 +224,7 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     shippingAddress: shippingInfo,
     billingAddress: billingSameAsShipping ? shippingInfo : billingInfo,
     billingSameAsShipping,
+    ...(attribution ? { attribution } : {}),
     payment: {
       method: "razorpay",
       razorpayOrderId,
@@ -351,6 +359,13 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     await processReferralReward(order._id, req.user._id);
   } catch (err) {
     console.error("Referral reward error:", err.message);
+  }
+
+  // Accrue promoter commission for attributed orders (best-effort)
+  try {
+    await accrueCommission(order);
+  } catch (err) {
+    console.error("Commission accrual error:", err.message);
   }
 
   // Queue adhoc Shiprocket order creation (best-effort, non-blocking).

@@ -33,6 +33,7 @@ router.use("/newsletter", require("./newsletter.routes"));
 router.use("/special-coupons", require("./specialCoupon.routes"));
 router.use("/loyalty", require("./loyalty.routes"));
 router.use("/referrals", require("./referral.routes"));
+router.use("/promoters", require("./promoter.routes"));
 router.use("/reviews", require("./review.routes"));
 router.use("/whatsapp", require("./whatsapp.routes"));
 

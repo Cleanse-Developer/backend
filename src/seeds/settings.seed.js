@@ -65,6 +65,18 @@ const settings = [
     },
   },
   {
+    key: "promoter_config",
+    value: {
+      enabled: true,
+      defaultCommissionType: "percentage", // percentage | fixed_per_order
+      defaultCommissionRate: 10, // percent, or flat ₹ when fixed
+      commissionBasis: "net_merchandise", // subtotal − all discounts (excl. shipping/giftwrap/loyalty)
+      autoApproveAfterDays: 7, // pending → approved this long after delivery
+      attributionWindowDays: 30, // last-click cookie lifetime
+      clickDedupWindowMinutes: 60,
+    },
+  },
+  {
     key: "site_name",
     value: "Cleanse Ayurveda",
   },
