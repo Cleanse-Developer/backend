@@ -22,6 +22,7 @@ router.use("/bundles", require("./bundle.routes"));
 router.use("/pricing", require("./pricing.routes"));
 router.use("/special-coupons", require("./specialCoupon.routes").publicRouter);
 router.use("/referral", require("./referral.routes").publicRouter);
+router.use("/public/abandoned-carts", require("./abandonedCart.routes"));
 
 // Public webhook route (must be before auth middleware)
 router.use("/payments/webhook", require("./payment.routes").webhookRouter);
