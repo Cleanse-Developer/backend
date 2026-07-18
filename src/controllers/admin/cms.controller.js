@@ -8,10 +8,8 @@ const {
   invalidateSettingsCache,
   CMS_DEFAULTS,
 } = require("../settings.controller");
-const { withLocaleVariants } = require("../../config/locales");
 
-// Base (English) CMS section keys.
-const CMS_BASE_KEYS = [
+const CMS_KEYS = [
   // Top promo/announcement bar — stored under the existing public "promoBanner"
   // settings key so the storefront reads it with no extra wiring.
   "promoBanner",
@@ -32,13 +30,6 @@ const CMS_BASE_KEYS = [
   "cmsTerms",
   "cmsPrivacy",
 ];
-
-// Accept the bare English key AND every per-locale variant (cmsHero_hi, ...),
-// so an admin can read/write translated content without any per-key edits when
-// a language is added. A `_hi` key has no CMS_DEFAULTS entry, so getCmsSection
-// returns its raw saved value (or null) — the admin editor seeds it from the
-// English section for translate-in-place authoring.
-const CMS_KEYS = withLocaleVariants(CMS_BASE_KEYS);
 
 // POST /api/admin/cms/upload-image
 const uploadCmsImage = asyncHandler(async (req, res) => {

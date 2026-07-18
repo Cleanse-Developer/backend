@@ -2,15 +2,10 @@ const Settings = require("../models/Settings");
 const Product = require("../models/Product");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiResponse = require("../utils/ApiResponse");
-const {
-  DEFAULT_LOCALE,
-  normalizeLocale,
-  localeKey,
-  withLocaleVariants,
-} = require("../config/locales");
 
-// Non-CMS public keys — config/values, not translated per-locale.
-const PUBLIC_MISC_KEYS = [
+// Whitelist of keys that are safe to expose publicly
+const PUBLIC_KEYS = [
+  "promoBanner",
   "freeShippingThreshold",
   "socialLinks",
   "whatsappNumber",
@@ -19,11 +14,7 @@ const PUBLIC_MISC_KEYS = [
   "newsletterPopupConfig",
   "siteName",
   "supportEmail",
-];
-
-// CMS section keys that support per-locale variants (incl. the promo bar).
-const CMS_PUBLIC_KEYS = [
-  "promoBanner",
+  // CMS section keys
   "cmsHero",
   "cmsFormula",
   "cmsMarquee",
@@ -40,14 +31,6 @@ const CMS_PUBLIC_KEYS = [
   "cmsReturns",
   "cmsTerms",
   "cmsPrivacy",
-];
-
-// Whitelist of keys safe to expose publicly. The CMS keys expand into every
-// locale variant (cmsHero + cmsHero_hi + ...) so a saved translation is fetched
-// alongside its English base; getPublicSettings then overlays locale over English.
-const PUBLIC_KEYS = [
-  ...PUBLIC_MISC_KEYS,
-  ...withLocaleVariants(CMS_PUBLIC_KEYS),
 ];
 
 // Simple in-memory cache
@@ -619,38 +602,16 @@ const getPublicSettings = asyncHandler(async (req, res) => {
     settings[doc.key] = doc.value;
   }
 
-  // Requested storefront language (defaults to English on missing/unknown).
-  const lang = normalizeLocale(req.query.lang);
-
-  // Overlay a section for the active language: defaults ← English ← locale.
-  // A missing locale doc, or a field absent from it, transparently falls back to
-  // English. Shallow (matches the existing merge): nested objects/arrays in the
-  // locale doc replace their English counterpart wholesale.
-  const merged = (baseKey, defaultValue = {}) => ({
-    ...defaultValue,
-    ...(settings[baseKey] || {}),
-    ...(lang !== DEFAULT_LOCALE ? settings[localeKey(baseKey, lang)] || {} : {}),
-  });
-
-  // Same overlay for keys that must stay null when nothing is authored (legal
-  // pages) — never return an empty object, which the storefront treats as content.
-  const mergedOrNull = (baseKey) => {
-    const base = settings[baseKey];
-    const loc = lang !== DEFAULT_LOCALE ? settings[localeKey(baseKey, lang)] : null;
-    if (!base && !loc) return null;
-    return { ...(base || {}), ...(loc || {}) };
-  };
-
   // Provide defaults for missing keys so frontend always gets a predictable shape
   const result = {
-    promoBanner: merged("promoBanner", {
+    promoBanner: settings.promoBanner || {
       enabled: true,
       messages: [
         "100% NATURAL INGREDIENTS",
         "FREE SHIPPING ON ORDERS ABOVE Rs.1200",
         "AYURVEDIC & DOCTOR APPROVED",
       ],
-    }),
+    },
     freeShippingThreshold: settings.freeShippingThreshold ?? 1200,
     socialLinks: settings.socialLinks || {
       instagram: "https://www.instagram.com/cleanseayurveda/",
@@ -672,9 +633,11 @@ const getPublicSettings = asyncHandler(async (req, res) => {
     },
   };
 
-  // CMS section defaults — overlay: defaults ← English ← active locale.
+  // CMS section defaults — merge saved values over defaults
   for (const [key, defaultValue] of Object.entries(CMS_DEFAULTS)) {
-    result[key] = merged(key, defaultValue);
+    result[key] = settings[key]
+      ? { ...defaultValue, ...settings[key] }
+      : defaultValue;
   }
 
   // Resolve featured product references for cmsBento
@@ -740,10 +703,9 @@ const getPublicSettings = asyncHandler(async (req, res) => {
   }
 
   // Legal pages (Terms / Privacy): no hardcoded fallback — expose the saved
-  // value (locale over English) if present, otherwise null so the storefront
-  // renders an empty page.
-  result.cmsTerms = mergedOrNull("cmsTerms");
-  result.cmsPrivacy = mergedOrNull("cmsPrivacy");
+  // value if present, otherwise null so the storefront renders an empty page.
+  result.cmsTerms = settings.cmsTerms || null;
+  result.cmsPrivacy = settings.cmsPrivacy || null;
 
   // TEMPORARY: cache-write disabled — see disabled cache-read block above.
   // cachedSettings = result;
