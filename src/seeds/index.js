@@ -6,6 +6,7 @@ const connectDB = require("../config/db");
 const seedCategories = require("./categories.seed");
 const seedAdmin = require("./admin.seed");
 const seedProducts = require("./products.seed");
+const seedReviews = require("./reviews.seed");
 const seedBlogs = require("./blogs.seed");
 const seedCoupons = require("./coupons.seed");
 const seedSettings = require("./settings.seed");
@@ -31,6 +32,7 @@ const run = async () => {
     await seedCategories();
     await seedAdmin();
     await seedProducts();
+    await seedReviews();
     await seedBlogs();
     await seedCoupons();
     await seedSettings();

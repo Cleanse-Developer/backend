@@ -14,6 +14,30 @@ const {
   GIFT_WRAP_COST,
 } = require("../utils/constants");
 const resolveItemPrice = require("../utils/resolveItemPrice");
+const { requiresVariantSelection } = require("../utils/resolveItemPrice");
+const ApiError = require("../utils/ApiError");
+
+/**
+ * Guard a cart before it is charged: every line whose product is priced through
+ * variants must carry a selectedSize that matches a priced variant. Without this,
+ * resolveItemPrice silently falls back to the base product.price (often a ₹1
+ * placeholder) and the order is charged at that price. Call this at every
+ * charge/order-creation entrypoint (NOT on plain cart display, which stays
+ * lenient so a shopper can still view and fix such a cart).
+ *
+ * @param {Array} items - Populated cart items ({ product, selectedSize }).
+ * @throws {ApiError} 400 when a sized product has no matching priced variant.
+ */
+function assertPriceableCart(items = []) {
+  for (const item of items) {
+    if (requiresVariantSelection(item.product, item.selectedSize)) {
+      const name = item.product?.name || "this product";
+      throw ApiError.badRequest(
+        `Please select a size for "${name}" before checkout.`
+      );
+    }
+  }
+}
 
 /**
  * Default cart-tier-discount config, built from the hardcoded constants.
@@ -562,6 +586,7 @@ const calculateTierProgress = (subtotal, tierCfg) => {
 
 module.exports = {
   calculatePricing,
+  assertPriceableCart,
   calculateBundleDiscounts,
   calculateTierProgress,
   resolveShippingConfig,

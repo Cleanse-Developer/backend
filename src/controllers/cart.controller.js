@@ -1,8 +1,10 @@
 const Cart = require("../models/Cart");
+const Product = require("../models/Product");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const { calculatePricing } = require("../services/pricing.service");
+const { requiresVariantSelection } = require("../utils/resolveItemPrice");
 
 const POPULATE_PRODUCT = {
   path: "items.product",
@@ -37,6 +39,17 @@ const getCart = asyncHandler(async (req, res) => {
 // POST /api/cart/items
 const addItem = asyncHandler(async (req, res) => {
   const { productId, quantity = 1, selectedSize } = req.body;
+
+  // A product priced through variants must be added with a matching priced
+  // variant — otherwise its line would silently price at the base (placeholder)
+  // value. Reject at the entry point so such an item never enters a cart.
+  const product = await Product.findById(productId).select("name price sizes");
+  if (!product) {
+    throw ApiError.notFound("Product not found");
+  }
+  if (requiresVariantSelection(product, selectedSize)) {
+    throw ApiError.badRequest(`Please select a size for "${product.name}".`);
+  }
 
   let cart = await Cart.findOne({ user: req.user._id });
 

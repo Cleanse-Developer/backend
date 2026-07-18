@@ -14,9 +14,9 @@ const placeOrderRules = [
   body("shippingInfo.phone")
     .notEmpty()
     .withMessage("Phone number is required")
-    .custom((value) => {
-      if (!isValidPhone(value)) {
-        throw new Error("Valid 10-digit Indian mobile number is required");
+    .custom((value, { req }) => {
+      if (!isValidPhone(value, req.body?.shippingInfo?.countryCode)) {
+        throw new Error("Please enter a valid phone number");
       }
       return true;
     }),
@@ -45,6 +45,7 @@ const placeOrderRules = [
     .withMessage("Pincode is required")
     .isString()
     .trim(),
+  body("shippingInfo.country").optional().isString().trim(),
   body("paymentMethod")
     .notEmpty()
     .withMessage("Payment method is required")

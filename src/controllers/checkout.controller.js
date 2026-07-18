@@ -6,7 +6,7 @@ const Order = require("../models/Order");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
-const { calculatePricing } = require("../services/pricing.service");
+const { calculatePricing, assertPriceableCart } = require("../services/pricing.service");
 const { reserveStock, releaseStock, validateStock } = require("../services/stock.service");
 const razorpayService = require("../services/razorpay.service");
 const {
@@ -107,6 +107,10 @@ const initiateCheckout = asyncHandler(async (req, res) => {
   if (!cart || !cart.items.length) {
     throw ApiError.badRequest("Cart is empty");
   }
+
+  // Reject any sized product without a matching priced variant before charging,
+  // so a missing size can never fall back to the base (placeholder) price.
+  assertPriceableCart(cart.items);
 
   // 3. Validate stock (early warning)
   const stockCheck = await validateStock(cart.items);

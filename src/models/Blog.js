@@ -12,6 +12,9 @@ const blogSchema = new mongoose.Schema(
       enum: ["Hair Care", "Skin Care", "Wellness", "Ingredients", "Rituals"],
     },
     excerpt: { type: String, maxlength: 500 },
+    // Optional standalone summary shown as a section on the article page. Kept
+    // separate from `excerpt` (which is the list-card teaser).
+    summary: { type: String, maxlength: 1000 },
     content: [{ type: String }],
     image: { type: String },
     imageSources: responsiveSources,

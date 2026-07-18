@@ -15,9 +15,9 @@ const addressRules = [
   body("phone")
     .notEmpty()
     .withMessage("Phone is required")
-    .custom((value) => {
-      if (!isValidPhone(value)) {
-        throw new Error("Valid 10-digit Indian mobile number is required");
+    .custom((value, { req }) => {
+      if (!isValidPhone(value, req.body?.countryCode)) {
+        throw new Error("Please enter a valid phone number");
       }
       return true;
     }),
@@ -66,9 +66,9 @@ const addressPatchRules = [
   body("fullName").optional().isString().trim(),
   body("phone")
     .optional()
-    .custom((value) => {
-      if (value && !isValidPhone(value)) {
-        throw new Error("Valid 10-digit Indian mobile number is required");
+    .custom((value, { req }) => {
+      if (value && !isValidPhone(value, req.body?.countryCode)) {
+        throw new Error("Please enter a valid phone number");
       }
       return true;
     }),

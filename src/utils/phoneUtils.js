@@ -72,12 +72,23 @@ function parsePhone(raw, defaultCountryCode = DEFAULT_COUNTRY_CODE) {
 }
 
 /**
- * Validate that a raw input is a valid Indian mobile number:
- * exactly 10 digits, starting with 6–9.
+ * Validate a raw phone input.
+ *
+ * India (default, or countryCode "+91") keeps the strict rule: exactly 10
+ * digits starting with 6–9. Any other dialling code accepts a general
+ * international number of 6–15 digits (E.164 range).
+ *
+ * The default keeps every existing caller (auth/OTP, user profile) India-strict
+ * unless they explicitly pass a non-India countryCode.
  */
-function isValidPhone(raw) {
-  const local = extractLocalNumber(raw);
-  return /^[6-9]\d{9}$/.test(local);
+function isValidPhone(raw, countryCode = DEFAULT_COUNTRY_CODE) {
+  const cc = (countryCode || DEFAULT_COUNTRY_CODE).trim();
+  if (cc === DEFAULT_COUNTRY_CODE) {
+    const local = extractLocalNumber(raw);
+    return /^[6-9]\d{9}$/.test(local);
+  }
+  const digits = String(raw || "").replace(/\D/g, "");
+  return digits.length >= 6 && digits.length <= 15;
 }
 
 /**

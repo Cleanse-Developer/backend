@@ -47,6 +47,13 @@ const createBundleRules = [
   body("priority")
     .optional()
     .isInt(),
+  body("ribbonText")
+    .optional()
+    .isLength({ max: 40 })
+    .withMessage("Ribbon text must be at most 40 characters"),
+  body("isFeatured")
+    .optional()
+    .isBoolean(),
 ];
 
 const updateBundleRules = [
@@ -74,6 +81,12 @@ const updateBundleRules = [
   body("minProducts")
     .optional()
     .isInt({ min: 2 }),
+  body("ribbonText")
+    .optional()
+    .isLength({ max: 40 }),
+  body("isFeatured")
+    .optional()
+    .isBoolean(),
 ];
 
 const bundleIdRules = [

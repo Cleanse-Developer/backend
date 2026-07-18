@@ -4,7 +4,9 @@ const ApiResponse = require("../utils/ApiResponse");
 
 const POPULATE_PRODUCT = {
   path: "products.product",
-  select: "name slug price images tag",
+  // Include sizes so the storefront can show the real (variant) price, not the
+  // base placeholder price, for variant-priced products.
+  select: "name slug price compareAtPrice images tag sizes",
 };
 
 // GET /api/wishlist

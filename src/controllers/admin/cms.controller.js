@@ -4,9 +4,14 @@ const { syncReelsToCms } = require("../../services/instagram.service");
 const ApiResponse = require("../../utils/ApiResponse");
 const ApiError = require("../../utils/ApiError");
 const asyncHandler = require("../../utils/asyncHandler");
-const { invalidateSettingsCache } = require("../settings.controller");
+const {
+  invalidateSettingsCache,
+  CMS_DEFAULTS,
+} = require("../settings.controller");
+const { withLocaleVariants } = require("../../config/locales");
 
-const CMS_KEYS = [
+// Base (English) CMS section keys.
+const CMS_BASE_KEYS = [
   // Top promo/announcement bar — stored under the existing public "promoBanner"
   // settings key so the storefront reads it with no extra wiring.
   "promoBanner",
@@ -16,11 +21,24 @@ const CMS_KEYS = [
   "cmsBento",
   "cmsCta",
   "cmsPeelReveal",
+  "cmsRitualBanner",
+  "cmsRitualPage",
+  "cmsGenesis",
+  "cmsWardrobe",
   "cmsHeader",
   "cmsFooter",
+  "cmsShipping",
+  "cmsReturns",
   "cmsTerms",
   "cmsPrivacy",
 ];
+
+// Accept the bare English key AND every per-locale variant (cmsHero_hi, ...),
+// so an admin can read/write translated content without any per-key edits when
+// a language is added. A `_hi` key has no CMS_DEFAULTS entry, so getCmsSection
+// returns its raw saved value (or null) — the admin editor seeds it from the
+// English section for translate-in-place authoring.
+const CMS_KEYS = withLocaleVariants(CMS_BASE_KEYS);
 
 // POST /api/admin/cms/upload-image
 const uploadCmsImage = asyncHandler(async (req, res) => {
@@ -58,7 +76,18 @@ const getCmsSection = asyncHandler(async (req, res) => {
   }
 
   const doc = await Settings.findOne({ key }).lean();
-  res.json(ApiResponse.ok(doc ? doc.value : null));
+
+  // Mirror the public endpoint's shallow merge over the shipped defaults. A
+  // section that has never been saved otherwise opens as a blank form even
+  // though the storefront is already rendering CMS_DEFAULTS for it, and a
+  // section saved before a new field existed would never surface that field.
+  // Keys with no defaults (promoBanner, cmsTerms, cmsPrivacy) behave as before.
+  const defaults = CMS_DEFAULTS[key];
+  const value = doc
+    ? { ...(defaults || {}), ...doc.value }
+    : defaults ?? null;
+
+  res.json(ApiResponse.ok(value));
 });
 
 // PATCH /api/admin/cms/:key

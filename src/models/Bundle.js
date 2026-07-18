@@ -32,6 +32,15 @@ const bundleSchema = new mongoose.Schema(
       alt: { type: String },
     },
 
+    // Benefit copy for the diagonal ribbon on the homepage bundle section.
+    // Rendered in a fixed 168px rotated banner, so long values clip — hence 40.
+    // Empty falls back to the discount-derived "Save 15%" label.
+    ribbonText: { type: String, maxlength: 40, trim: true },
+
+    // Exactly one bundle is the homepage "Build Your Ritual" pick. Enforced in
+    // the admin controller, which unsets the flag on every other bundle.
+    isFeatured: { type: Boolean, default: false },
+
     // Which product page(s) should show this bundle
     displayOnProducts: [
       {
@@ -47,6 +56,7 @@ const bundleSchema = new mongoose.Schema(
 );
 
 bundleSchema.index({ isActive: 1, priority: -1 });
+bundleSchema.index({ isActive: 1, isFeatured: 1 });
 bundleSchema.index({ "products": 1 });
 bundleSchema.index({ "displayOnProducts": 1 });
 

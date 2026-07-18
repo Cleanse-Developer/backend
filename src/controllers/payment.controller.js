@@ -12,7 +12,7 @@ const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const razorpayService = require("../services/razorpay.service");
 const { createOrderId } = require("../services/order.service");
-const { calculatePricing } = require("../services/pricing.service");
+const { calculatePricing, assertPriceableCart } = require("../services/pricing.service");
 const { awardPoints, redeemPoints } = require("../services/loyalty.service");
 const { processReferralReward } = require("../services/referral.service");
 const {
@@ -65,6 +65,10 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
   if (!cart || !cart.items.length) {
     throw ApiError.badRequest("Cart is empty");
   }
+
+  // Reject any sized product without a matching priced variant before charging,
+  // so a missing size can never fall back to the base (placeholder) price.
+  assertPriceableCart(cart.items);
 
   // Calculate pricing (with special coupons + loyalty)
   const pricing = await calculatePricing(
@@ -145,6 +149,10 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
   if (!cart || !cart.items.length) {
     throw ApiError.badRequest("Cart is empty");
   }
+
+  // Reject any sized product without a matching priced variant before charging,
+  // so a missing size can never fall back to the base (placeholder) price.
+  assertPriceableCart(cart.items);
 
   // Calculate pricing (with special coupons + loyalty)
   const pricing = await calculatePricing(

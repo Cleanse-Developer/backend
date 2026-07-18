@@ -5,6 +5,15 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const { paginationMeta } = require("../../utils/pagination");
 
+// The homepage section renders exactly one bundle, so featuring a bundle clears
+// the flag everywhere else instead of letting priority silently break the tie.
+async function unfeatureOthers(keepId) {
+  await Bundle.updateMany(
+    { _id: { $ne: keepId }, isFeatured: true },
+    { $set: { isFeatured: false } }
+  );
+}
+
 // GET /api/admin/bundles
 const listBundles = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, status, search } = req.query;
@@ -72,6 +81,8 @@ const createBundle = asyncHandler(async (req, res) => {
     isActive,
     priority,
     image,
+    ribbonText,
+    isFeatured,
   } = req.body;
 
   if (!name || !slug || !products || !discountType || discountValue == null) {
@@ -104,6 +115,13 @@ const createBundle = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Percentage discount cannot exceed 100%");
   }
 
+  const active = isActive !== undefined ? isActive : true;
+  if (isFeatured && !active) {
+    throw ApiError.badRequest(
+      "Only an active bundle can be featured on the homepage"
+    );
+  }
+
   const bundle = await Bundle.create({
     name,
     slug,
@@ -114,10 +132,14 @@ const createBundle = asyncHandler(async (req, res) => {
     discountValue,
     minProducts: minProducts || 3,
     displayOnProducts: displayOnProducts || products, // default: show on all bundle products
-    isActive: isActive !== undefined ? isActive : true,
+    isActive: active,
     priority: priority || 0,
     image,
+    ribbonText,
+    isFeatured: !!isFeatured,
   });
+
+  if (bundle.isFeatured) await unfeatureOthers(bundle._id);
 
   await bundle.populate("products", "name slug price images");
 
@@ -144,6 +166,8 @@ const updateBundle = asyncHandler(async (req, res) => {
     "isActive",
     "priority",
     "image",
+    "ribbonText",
+    "isFeatured",
   ];
 
   // Validate slug uniqueness if changed
@@ -179,13 +203,30 @@ const updateBundle = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("Percentage discount cannot exceed 100%");
   }
 
+  // Featuring an inactive bundle would leave the homepage section empty, since
+  // the storefront only ever reads active bundles.
+  if (
+    req.body.isFeatured === true &&
+    !(req.body.isActive ?? bundle.isActive)
+  ) {
+    throw ApiError.badRequest(
+      "Only an active bundle can be featured on the homepage"
+    );
+  }
+
   for (const field of allowedFields) {
     if (req.body[field] !== undefined) {
       bundle[field] = req.body[field];
     }
   }
 
+  // Deactivating the homepage pick releases the flag rather than stranding the
+  // section on a bundle the storefront will refuse to serve.
+  if (!bundle.isActive) bundle.isFeatured = false;
+
   await bundle.save();
+  if (bundle.isFeatured) await unfeatureOthers(bundle._id);
+
   await bundle.populate("products", "name slug price images");
 
   res.json(ApiResponse.ok({ bundle }, "Bundle updated"));

@@ -28,6 +28,23 @@ const listBundles = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ bundles }));
 });
 
+// GET /api/bundles/featured
+// The single bundle shown in the homepage "Build Your Ritual" section.
+// Falls back to the highest-priority active bundle when nothing is flagged —
+// keeps the section populated for data created before isFeatured existed.
+const getFeaturedBundle = asyncHandler(async (req, res) => {
+  const bundle =
+    (await Bundle.findOne({ isActive: true, isFeatured: true })
+      .populate(POPULATE_PRODUCTS)
+      .lean()) ||
+    (await Bundle.findOne({ isActive: true })
+      .populate(POPULATE_PRODUCTS)
+      .sort({ priority: -1, createdAt: -1 })
+      .lean());
+
+  res.json(ApiResponse.ok({ bundle: bundle || null }));
+});
+
 // GET /api/bundles/:slug
 const getBundle = asyncHandler(async (req, res) => {
   const bundle = await Bundle.findOne({
@@ -44,4 +61,4 @@ const getBundle = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ bundle }));
 });
 
-module.exports = { listBundles, getBundle };
+module.exports = { listBundles, getFeaturedBundle, getBundle };

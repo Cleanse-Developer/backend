@@ -12,7 +12,7 @@ const ApiResponse = require("../utils/ApiResponse");
 const { createOrderId, runCodPostActions } = require("../services/order.service");
 const whatsappService = require("../services/whatsapp.service");
 const env = require("../config/env");
-const { calculatePricing } = require("../services/pricing.service");
+const { calculatePricing, assertPriceableCart } = require("../services/pricing.service");
 const { reversePoints } = require("../services/loyalty.service");
 const { reverseReferralReward } = require("../services/referral.service");
 const {
@@ -79,6 +79,10 @@ const placeOrder = asyncHandler(async (req, res) => {
   if (!cart || !cart.items.length) {
     throw ApiError.badRequest("Cart is empty");
   }
+
+  // Reject any sized product without a matching priced variant before charging,
+  // so a missing size can never fall back to the base (placeholder) price.
+  assertPriceableCart(cart.items);
 
   // Validate stock availability
   const stockCheck = await validateStock(cart.items);
