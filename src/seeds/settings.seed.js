@@ -54,7 +54,7 @@ const settings = [
     key: "referral_config",
     value: {
       enabled: true,
-      rewardMode: "loyalty_points_referrer", // loyalty_points_referrer | loyalty_points_both | coupon_referrer | coupon_both
+      rewardMode: "loyalty_points_both", // loyalty_points_referrer | loyalty_points_both | coupon_referrer | coupon_both
       referrerRewardValue: 200,
       refereeRewardValue: 100,
       referrerCouponDiscountType: "fixed", // fixed | percentage

@@ -5,7 +5,7 @@ const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const ApiError = require("../utils/ApiError");
 const { issueRefund } = require("./razorpay.service");
-const { reversePoints } = require("./loyalty.service");
+const { reverseOrderPoints } = require("./loyalty.service");
 const { reverseReferralReward } = require("./referral.service");
 const { reverseCommission } = require("./promoter.service");
 
@@ -62,14 +62,8 @@ const reverseOrderRewards = async (order) => {
       }
     }
 
-    if (order.loyaltyPointsEarned > 0) {
-      await reversePoints(
-        order.user,
-        order.loyaltyPointsEarned,
-        order._id,
-        `Reversed ${order.loyaltyPointsEarned} points from refunded order ${order.orderId}`
-      );
-    }
+    // Reverse only the points we ACTUALLY credited (order.loyaltyPointsAwarded).
+    await reverseOrderPoints(order, "refunded");
 
     const redeemed = order.pricing?.loyaltyPointsRedeemed || 0;
     if (redeemed > 0) {

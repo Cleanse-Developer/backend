@@ -173,7 +173,14 @@ const orderSchema = new mongoose.Schema(
     ],
     contactEmail: { type: String },
     contactPhone: { type: String },
+    // Estimate computed at order creation (what the order WILL earn).
     loyaltyPointsEarned: { type: Number, default: 0 },
+    // Points ACTUALLY credited to the buyer for this order (set when they're
+    // awarded — after payment / COD approval, not at creation). This, not the
+    // estimate above, is what a cancel/refund reverses, so an order cancelled
+    // before its points were ever credited can't claw back points the buyer
+    // never received. Zeroed once reversed, so a reversal can't run twice.
+    loyaltyPointsAwarded: { type: Number, default: 0 },
     // External-promoter attribution. Set at order creation when the order used a
     // promoter-owned coupon code (via="code") or came through a promoter link
     // (via="link"). Drives commission accrual/reversal. Absent for organic orders.

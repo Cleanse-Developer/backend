@@ -5,6 +5,7 @@ const SpinWheelEntry = require("../models/SpinWheelEntry");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
+const { sendSpinRewardEmail } = require("../services/email.service");
 const crypto = require("crypto");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -279,6 +280,14 @@ const claim = asyncHandler(async (req, res) => {
     { $setOnInsert: { email: key, source: "spin_wheel", isActive: true } },
     { upsert: true }
   ).catch(() => {});
+
+  // Best-effort "you won" email with the coupon (non-blocking — never fail the
+  // claim if mail is down).
+  sendSpinRewardEmail(key, {
+    prizeLabel: prize.label,
+    couponCode: code,
+    expiresAt: validTill,
+  }).catch((err) => console.error("Spin reward email failed:", err.message));
 
   res.json(
     ApiResponse.ok(

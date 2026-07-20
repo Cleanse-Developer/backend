@@ -13,7 +13,7 @@ const ApiResponse = require("../utils/ApiResponse");
 const razorpayService = require("../services/razorpay.service");
 const { createOrderId } = require("../services/order.service");
 const { calculatePricing, assertPriceableCart } = require("../services/pricing.service");
-const { awardPoints, redeemPoints } = require("../services/loyalty.service");
+const { awardOrderPoints, redeemPoints } = require("../services/loyalty.service");
 const { processReferralReward } = require("../services/referral.service");
 const {
   resolveOrderAttribution,
@@ -354,13 +354,8 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
   cart.giftMessage = "";
   await cart.save();
 
-  // Award loyalty points
-  await awardPoints(
-    req.user._id,
-    pricing.loyaltyPoints,
-    order._id,
-    `Earned ${pricing.loyaltyPoints} points from order ${orderId}`
-  );
+  // Award loyalty points (records order.loyaltyPointsAwarded for accurate reversal)
+  await awardOrderPoints(order);
 
   // Process referral reward (best-effort)
   try {

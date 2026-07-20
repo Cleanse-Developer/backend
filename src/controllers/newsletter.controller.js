@@ -74,10 +74,38 @@ const subscribe = asyncHandler(async (req, res) => {
         "This email was previously unsubscribed. Please contact support to reactivate."
       );
     }
-    // Already active — return success without overwriting source
+
+    // Existing active subscriber. Issue the welcome coupon only if they don't
+    // already have one (never mint a fresh coupon on repeats, or the form becomes
+    // a coupon farm — this also covers addresses added by another flow like the
+    // spin wheel, which upserts a record without a coupon). Then ALWAYS (re)send
+    // the welcome email so every subscribe attempt actually delivers its email.
+    let couponCode = existing.couponCode;
+    let mutated = false;
+    if (!couponCode) {
+      couponCode = await issueSignupCoupon();
+      existing.couponCode = couponCode;
+      mutated = true;
+    }
+    if (!existing.unsubscribeToken) {
+      existing.unsubscribeToken = crypto.randomBytes(32).toString("hex");
+      mutated = true;
+    }
+    if (mutated) await existing.save();
+
+    sendWelcomeEmail(existing, couponCode).catch((err) => {
+      console.error("Newsletter welcome email failed:", err.message);
+    });
+
     return res
       .status(200)
-      .json(new ApiResponse(200, { success: true, alreadySubscribed: true }, "Already subscribed"));
+      .json(
+        new ApiResponse(
+          200,
+          { success: true, couponCode, alreadySubscribed: !mutated },
+          "Subscribed to newsletter successfully"
+        )
+      );
   }
 
   // New subscriber: issue a single-use signup coupon, then insert with source

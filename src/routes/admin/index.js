@@ -35,6 +35,7 @@ router.use("/loyalty", require("./loyalty.routes"));
 router.use("/referrals", require("./referral.routes"));
 router.use("/promoters", require("./promoter.routes"));
 router.use("/reviews", require("./review.routes"));
+router.use("/contact", require("./contact.routes"));
 router.use("/whatsapp", require("./whatsapp.routes"));
 
 module.exports = router;

@@ -8,7 +8,10 @@ const { awardPoints, reversePoints } = require("./loyalty.service");
 
 const DEFAULT_CONFIG = {
   enabled: true,
-  rewardMode: "loyalty_points_referrer",
+  // "_both" so the referee actually receives refereeRewardValue below. With
+  // "_referrer" that value is configured but never paid out, which contradicts
+  // the share copy ("...and get a discount!") shown to the person signing up.
+  rewardMode: "loyalty_points_both",
   referrerRewardValue: 200,
   refereeRewardValue: 100,
   referrerCouponDiscountType: "fixed",

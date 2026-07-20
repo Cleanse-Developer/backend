@@ -16,8 +16,10 @@ const contactRules = [
     .trim(),
   body("subject")
     .optional()
-    .isIn(["order", "product", "return", "wholesale", "other"])
-    .withMessage("Subject must be order, product, return, wholesale, or other"),
+    .isString()
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage("Subject must be at most 200 characters"),
   body("message")
     .notEmpty()
     .withMessage("Message is required")

@@ -5,11 +5,9 @@ const contactSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, trim: true, lowercase: true },
     phone: { type: String },
-    subject: {
-      type: String,
-      enum: ["order", "product", "return", "wholesale", "other"],
-      default: "other",
-    },
+    // Free-form: the subject options are admin-editable (cmsContact.subjectOptions),
+    // so this is no longer a fixed enum.
+    subject: { type: String, trim: true, default: "General Inquiry" },
     message: { type: String, required: true, maxlength: 5000 },
     status: {
       type: String,

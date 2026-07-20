@@ -8,6 +8,7 @@
     "dev": "node --watch server.js",
     "seed": "node src/seeds/index.js",
     "seed:reset": "node src/seeds/index.js --reset",
+    "seed:cms-blog": "node scripts/seed-cms-blog.js",
     "test:api": "node tests/api-test.js",
     "test:promoter": "node tests/promoter.service.test.js",
     "test:shiprocket": "node tests/shiprocket.test.js && node tests/shiprocket.webhook.test.js && node tests/shiprocket.job.test.js && node tests/shiprocket.testmode.test.js && node tests/shipping-rate.test.js"

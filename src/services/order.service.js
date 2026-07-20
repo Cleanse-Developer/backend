@@ -5,7 +5,7 @@ const SpecialCoupon = require("../models/SpecialCoupon");
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const generateOrderId = require("../utils/generateOrderId");
-const { awardPoints } = require("./loyalty.service");
+const { awardOrderPoints } = require("./loyalty.service");
 const { processReferralReward } = require("./referral.service");
 const { accrueCommission } = require("./promoter.service");
 const whatsappService = require("./whatsapp.service");
@@ -26,16 +26,9 @@ const createOrderId = async () => {
  */
 const runCodPostActions = async (order) => {
   try {
-    if (order.loyaltyPointsEarned > 0) {
-      await awardPoints(
-        order.user,
-        order.loyaltyPointsEarned,
-        order._id,
-        `Earned ${order.loyaltyPointsEarned} points from order ${order.orderId}`
-      );
-    }
+    await awardOrderPoints(order);
   } catch (err) {
-    console.error(`[COD] awardPoints failed for ${order.orderId}:`, err.message);
+    console.error(`[COD] awardOrderPoints failed for ${order.orderId}:`, err.message);
   }
 
   try {

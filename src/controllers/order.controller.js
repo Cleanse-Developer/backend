@@ -13,7 +13,7 @@ const { createOrderId, runCodPostActions } = require("../services/order.service"
 const whatsappService = require("../services/whatsapp.service");
 const env = require("../config/env");
 const { calculatePricing, assertPriceableCart } = require("../services/pricing.service");
-const { reversePoints } = require("../services/loyalty.service");
+const { reverseOrderPoints } = require("../services/loyalty.service");
 const { reverseReferralReward } = require("../services/referral.service");
 const {
   resolveOrderAttribution,
@@ -560,15 +560,10 @@ const cancelOrder = asyncHandler(async (req, res) => {
       }
     }
 
-    // Reverse earned loyalty points (subtract what we awarded)
-    if (order.loyaltyPointsEarned > 0) {
-      await reversePoints(
-        req.user._id,
-        order.loyaltyPointsEarned,
-        order._id,
-        `Reversed ${order.loyaltyPointsEarned} points from cancelled order ${order.orderId}`
-      );
-    }
+    // Reverse only the points we ACTUALLY credited (order.loyaltyPointsAwarded),
+    // never the creation-time estimate — so an order cancelled before its points
+    // were awarded claws back nothing. Idempotent + floored at zero.
+    await reverseOrderPoints(order, "cancelled");
 
     // Restore redeemed loyalty points (refund them back to user)
     const redeemed = order.pricing?.loyaltyPointsRedeemed || 0;

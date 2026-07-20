@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const Settings = require("../models/Settings");
+const Order = require("../models/Order");
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -84,23 +85,93 @@ const redeemPoints = async (userId, points, orderId, description) => {
 };
 
 /**
- * Reverse points from a cancelled/refunded order.
- * Different from redeem: this is for reversing previously-awarded points.
+ * Reverse previously-awarded points from a cancelled/refunded order.
+ * Different from redeem: this is a clawback of points we granted.
+ *
+ * Floors the balance at zero: a reversal must never push the balance negative
+ * (e.g. the awarded points were already redeemed on another order before this one
+ * was cancelled). The clamp is atomic via an update pipeline; the pre-update doc
+ * is returned so the ledger records the amount ACTUALLY reversed.
  */
 const reversePoints = async (userId, points, orderId, description) => {
   if (points <= 0) return null;
 
-  await User.findByIdAndUpdate(userId, {
-    $inc: { loyaltyPoints: -points },
-  });
+  const before = await User.findOneAndUpdate(
+    { _id: userId },
+    [
+      {
+        $set: {
+          loyaltyPoints: {
+            $max: [0, { $subtract: [{ $ifNull: ["$loyaltyPoints", 0] }, points] }],
+          },
+        },
+      },
+    ],
+    { new: false }
+  );
+  if (!before) return null;
+
+  const actual = Math.min(points, Math.max(0, before.loyaltyPoints || 0));
+  if (actual <= 0) return null;
 
   return LoyaltyTransaction.create({
     user: userId,
     type: "reversed",
-    points: -points,
+    points: -actual,
     order: orderId || undefined,
-    description: description || `Reversed ${points} points`,
+    description: description || `Reversed ${actual} points`,
   });
+};
+
+/**
+ * Award an order's earned points to the buyer AND record on the order how many
+ * were actually credited (order.loyaltyPointsAwarded). Award first, then record —
+ * so a recorded amount always implies the points were really granted. Use this at
+ * every order-earn site instead of calling awardPoints directly, so the later
+ * cancel/refund reverses the credited amount, not the creation-time estimate.
+ */
+const awardOrderPoints = async (order) => {
+  const amount = order?.loyaltyPointsEarned || 0;
+  if (amount <= 0 || !order?.user) return null;
+  if (order.loyaltyPointsAwarded > 0) return null; // already awarded — don't double
+
+  const txn = await awardPoints(
+    order.user,
+    amount,
+    order._id,
+    `Earned ${amount} points from order ${order.orderId}`
+  );
+  await Order.updateOne(
+    { _id: order._id },
+    { $set: { loyaltyPointsAwarded: amount } }
+  );
+  order.loyaltyPointsAwarded = amount; // keep in-memory doc consistent
+  return txn;
+};
+
+/**
+ * Reverse the points ACTUALLY credited for an order (order.loyaltyPointsAwarded)
+ * on cancel/refund. Idempotent: zeroes the recorded amount so a second
+ * cancel/refund is a no-op. Reverses nothing when the points were never credited
+ * (order cancelled before payment / COD approval) — the source of the negative
+ * balances this replaces.
+ */
+const reverseOrderPoints = async (order, verb = "cancelled") => {
+  const amount = order?.loyaltyPointsAwarded || 0;
+  if (amount <= 0 || !order?.user) return null;
+
+  const txn = await reversePoints(
+    order.user,
+    amount,
+    order._id,
+    `Reversed ${amount} points from ${verb} order ${order.orderId}`
+  );
+  await Order.updateOne(
+    { _id: order._id },
+    { $set: { loyaltyPointsAwarded: 0 } }
+  );
+  order.loyaltyPointsAwarded = 0;
+  return txn;
 };
 
 /**
@@ -304,8 +375,10 @@ const expirePoints = async () => {
 
 module.exports = {
   awardPoints,
+  awardOrderPoints,
   redeemPoints,
   reversePoints,
+  reverseOrderPoints,
   adjustPoints,
   calculateMaxRedeemable,
   validateRedemption,

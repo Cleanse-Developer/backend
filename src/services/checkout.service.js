@@ -8,7 +8,7 @@ const SpinWheelEntry = require("../models/SpinWheelEntry");
 const User = require("../models/User");
 const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const { createOrderId } = require("./order.service");
-const { awardPoints, redeemPoints } = require("./loyalty.service");
+const { awardOrderPoints, redeemPoints } = require("./loyalty.service");
 const { processReferralReward } = require("./referral.service");
 const {
   resolveOrderAttribution,
@@ -276,13 +276,8 @@ const postOrderActions = async (order, session) => {
     }
   }
 
-  // Award loyalty points
-  await awardPoints(
-    session.user,
-    order.loyaltyPointsEarned,
-    order._id,
-    `Earned ${order.loyaltyPointsEarned} points from order ${order.orderId}`
-  );
+  // Award loyalty points (records order.loyaltyPointsAwarded for accurate reversal)
+  await awardOrderPoints(order);
 
   // Process referral reward (best-effort)
   try {

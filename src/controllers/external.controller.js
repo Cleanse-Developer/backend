@@ -8,7 +8,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 const { logActivity, ACTORS } = require("../utils/orderActivity");
-const { reversePoints } = require("../services/loyalty.service");
+const { reverseOrderPoints } = require("../services/loyalty.service");
 const { reverseReferralReward } = require("../services/referral.service");
 const { reverseCommission } = require("../services/promoter.service");
 const {
@@ -260,15 +260,8 @@ const cancelOrderByOrderId = asyncHandler(async (req, res) => {
       }
     }
 
-    // Reverse earned loyalty points.
-    if (order.loyaltyPointsEarned > 0 && order.user) {
-      await reversePoints(
-        order.user,
-        order.loyaltyPointsEarned,
-        order._id,
-        `Reversed ${order.loyaltyPointsEarned} points from cancelled order ${order.orderId}`
-      );
-    }
+    // Reverse only the points we ACTUALLY credited (order.loyaltyPointsAwarded).
+    await reverseOrderPoints(order, "cancelled");
 
     // Restore redeemed loyalty points.
     const redeemed = order.pricing?.loyaltyPointsRedeemed || 0;

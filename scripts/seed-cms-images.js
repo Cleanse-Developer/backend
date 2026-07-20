@@ -27,7 +27,7 @@ const { CMS_DEFAULTS } = require("../src/controllers/settings.controller");
 
 const DRY = process.argv.includes("--dry");
 const FRONTEND_PUBLIC = path.resolve(__dirname, "../../frontend/public");
-const SECTIONS = ["cmsRitualBanner", "cmsRitualPage", "cmsGenesis"];
+const SECTIONS = ["cmsRitualBanner", "cmsRitualPage", "cmsGenesis", "cmsContact"];
 
 const cache = new Map(); // localUrl -> { url, publicId } | null
 const missing = new Set();

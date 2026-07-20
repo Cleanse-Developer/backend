@@ -25,8 +25,10 @@ const PUBLIC_KEYS = [
   "cmsRitualPage",
   "cmsGenesis",
   "cmsWardrobe",
+  "cmsBlog",
   "cmsHeader",
   "cmsFooter",
+  "cmsContact",
   "cmsShipping",
   "cmsReturns",
   "cmsTerms",
@@ -483,6 +485,27 @@ const CMS_DEFAULTS = {
     sideCtaText: "Discover the ritual",
     sideCtaLink: "/ritual",
   },
+  // The /blog ("The Journal") page chrome: the hero media/heading and the
+  // newsletter band at the foot. Individual posts (and which one is Featured)
+  // are managed from the Blog Posts list, not here. Images are {url, publicId} —
+  // an empty (null) image falls back to the static asset the page ships, so
+  // untouched defaults render exactly as before. newsletterTitle keeps a "\n"
+  // for its two-line break (the storefront splits on it).
+  cmsBlog: {
+    // Static paths are the storefront's current /public assets (served from the
+    // storefront origin). Uploading a new image in admin replaces these with an
+    // absolute Cloudinary URL. Shape matches other sections: {url, publicId}.
+    heroImage: { url: "/images/b2.png", publicId: null },
+    heroBreadcrumb: "JOURNAL",
+    heroTitle: "THE JOURNAL",
+    heroSubtitle:
+      "Ancient wisdom, modern stories, explore the art of Ayurvedic living.",
+    newsletterTag: "STAY ROOTED",
+    newsletterTitle: "Stories Delivered\nTo Your Inbox",
+    newsletterDescription:
+      "Get weekly Ayurvedic insights, rituals, and exclusive content, straight from our journal.",
+    newsletterImage: { url: "/images/cta.png", publicId: null },
+  },
   cmsHeader: {
     logoImage: null,
     navLinks: [
@@ -517,6 +540,9 @@ const CMS_DEFAULTS = {
       facebook: "https://facebook.com",
       youtube: "https://www.youtube.com/@cleanseayurveda",
     },
+    // Single source of truth for org contact details — used by the footer, the
+    // contact page (Email/Call cards) and chat support. location + hours feed
+    // the contact page's Visit/Hours cards.
     contact: {
       addressLines: [
         "HRBD Life Sciences Pvt. Ltd.",
@@ -524,8 +550,51 @@ const CMS_DEFAULTS = {
       ],
       email: "care@cleanseayurveda.com",
       phone: "+91 80000 00000",
+      location: "Mumbai, Maharashtra",
+      hours: "Mon to Sat, 10am–6pm",
     },
     copyrightText: "2026 CLEANSE AYURVEDA . ALL RIGHTS RESERVED",
+  },
+  // Contact page (/touchpoint) — hero, form copy, subject options, FAQ. The
+  // Email/Call/Visit/Hours cards read cmsFooter.contact so org details stay
+  // single-sourced; this section owns everything else.
+  cmsContact: {
+    heroTitle: "LET'S\nCONNECT",
+    heroSubtitle:
+      "We're here to guide your wellness journey with ancient wisdom and modern care.",
+    heroImage: { url: "/images/b2.png", publicId: null },
+    formEyebrow: "Get in Touch",
+    formHeading: "Send Us\nA Message",
+    formCopy:
+      "Whether it's a question about our products, a partnership inquiry, or just to say hello, we'd love to hear from you.",
+    formImage: { url: "/images/why1.png", publicId: null },
+    subjectOptions: [
+      "Order Inquiry",
+      "Product Question",
+      "Returns & Exchanges",
+      "Wholesale & Partnerships",
+      "Other",
+    ],
+    faqTag: "Support",
+    faqTitle: "Frequently Asked\nQuestions",
+    faqs: [
+      {
+        q: "What are your shipping times?",
+        a: "We ship within 2-3 business days. Delivery takes 5-7 days across India and 10-14 days internationally.",
+      },
+      {
+        q: "Do you offer returns?",
+        a: "Yes, we offer a 7-day return policy on unopened products. Contact our support team to initiate a return.",
+      },
+      {
+        q: "Are your products 100% natural?",
+        a: "All Cleanse products are made with pure, ethically sourced Ayurvedic ingredients with no synthetic additives.",
+      },
+      {
+        q: "Do you ship internationally?",
+        a: "Yes, we ship worldwide. International shipping charges are calculated at checkout based on your location.",
+      },
+    ],
   },
   // Shipping / Returns pages — rendered by the storefront <LegalPage>. Unlike
   // cmsTerms/cmsPrivacy (empty until authored), these ship with real copy so the
