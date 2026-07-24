@@ -56,6 +56,17 @@ const productSchema = new mongoose.Schema(
       shippingInfo: [{ icon: { type: String }, label: { type: String } }],
       policies: [{ icon: { type: String }, label: { type: String } }],
     },
+    // Storefront product-detail hero "listing content" (title, marketing blurb,
+    // and the tag/helps/targets chips). Previously hardcoded per-product in the
+    // storefront (productListingContent.js); now admin-editable per product.
+    // Empty fields fall back to the shipped hardcoded content on the storefront.
+    listingContent: {
+      title: { type: String },
+      description: { type: String },
+      tags: [{ type: String }],
+      helps: [{ type: String }],
+      targets: [{ type: String }],
+    },
     averageRating: { type: Number, default: 0, min: 0, max: 5 },
     reviewCount: { type: Number, default: 0 },
     totalStock: { type: Number, default: 0 },

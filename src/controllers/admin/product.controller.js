@@ -140,6 +140,31 @@ const reorderFeatured = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok(null, "Featured order updated"));
 });
 
+// Complex/array fields arrive as JSON strings over multipart form-data. Parse
+// each ONLY when present as a string (so a field the client didn't send is left
+// untouched — important on PATCH, where setting it to undefined would wipe it),
+// and turn malformed JSON into a clean 400 instead of an unhandled 500.
+const JSON_FIELDS = [
+  "sizes",
+  "seo",
+  "tabHighlights",
+  "listingContent",
+  "benefits",
+  "skinType",
+  "concerns",
+];
+const parseJsonFields = (data) => {
+  for (const field of JSON_FIELDS) {
+    if (typeof data[field] === "string") {
+      try {
+        data[field] = JSON.parse(data[field]);
+      } catch {
+        throw ApiError.badRequest(`Invalid JSON in field "${field}"`);
+      }
+    }
+  }
+};
+
 // POST /api/admin/products
 const createProduct = asyncHandler(async (req, res) => {
   const productData = req.body;
@@ -147,27 +172,7 @@ const createProduct = asyncHandler(async (req, res) => {
   // Resolve images metadata + variant files
   await applyProductImages(productData, req);
 
-  // Parse sizes if sent as JSON string
-  if (typeof productData.sizes === "string") {
-    productData.sizes = JSON.parse(productData.sizes);
-  }
-
-  // Parse seo if sent as JSON string
-  if (typeof productData.seo === "string") {
-    productData.seo = JSON.parse(productData.seo);
-  }
-
-  // Parse tabHighlights if sent as JSON string
-  if (typeof productData.tabHighlights === "string") {
-    productData.tabHighlights = JSON.parse(productData.tabHighlights);
-  }
-
-  // Parse array fields if sent as JSON strings
-  for (const key of ["benefits", "skinType", "concerns"]) {
-    if (typeof productData[key] === "string") {
-      productData[key] = JSON.parse(productData[key]);
-    }
-  }
+  parseJsonFields(productData);
 
   const product = await Product.create(productData);
 
@@ -199,27 +204,7 @@ const updateProduct = asyncHandler(async (req, res) => {
   // Resolve images metadata + variant files (legacy fallback appends to existing)
   await applyProductImages(updateData, req, product.images || []);
 
-  // Parse sizes if sent as JSON string
-  if (typeof updateData.sizes === "string") {
-    updateData.sizes = JSON.parse(updateData.sizes);
-  }
-
-  // Parse seo if sent as JSON string
-  if (typeof updateData.seo === "string") {
-    updateData.seo = JSON.parse(updateData.seo);
-  }
-
-  // Parse tabHighlights if sent as JSON string
-  if (typeof updateData.tabHighlights === "string") {
-    updateData.tabHighlights = JSON.parse(updateData.tabHighlights);
-  }
-
-  // Parse array fields if sent as JSON strings
-  for (const key of ["benefits", "skinType", "concerns"]) {
-    if (typeof updateData[key] === "string") {
-      updateData[key] = JSON.parse(updateData[key]);
-    }
-  }
+  parseJsonFields(updateData);
 
   Object.assign(product, updateData);
   await product.save();

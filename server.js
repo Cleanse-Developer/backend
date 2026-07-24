@@ -51,6 +51,14 @@ app.get("/api/health", (req, res) => {
 // Public promoter link redirect (short shareable URLs: /r/:slug)
 app.use("/r", require("./src/routes/promoterPublic.routes"));
 
+// Outward-facing MCP endpoint for third-party agents (Streamable HTTP, stateless).
+// Behind the same EXTERNAL_API_TOKEN partners use for /api/external.
+app.use(
+  "/mcp",
+  require("./src/middleware/externalAuth"),
+  require("./src/routes/mcp.routes")
+);
+
 // API routes
 app.use("/api", routes);
 
