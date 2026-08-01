@@ -98,9 +98,17 @@ const getMaxRedeemable = asyncHandler(async (req, res) => {
   );
 });
 
+// GET /api/loyalty/config (public)
+// Returns loyalty program configuration for storefront display
+const getConfig = asyncHandler(async (req, res) => {
+  const config = await getLoyaltyConfig();
+  res.status(200).json(new ApiResponse(200, config));
+});
+
 module.exports = {
   getBalance,
   getTransactions,
   getRedeemPreview,
   getMaxRedeemable,
+  getConfig,
 };
