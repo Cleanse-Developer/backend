@@ -508,6 +508,10 @@ const CMS_DEFAULTS = {
   },
   cmsHeader: {
     logoImage: null,
+    // The language/currency capsule in the header. Only EN and ₹ exist today, so
+    // the control is informational — this lets admins hide it until there is a
+    // second locale to switch to.
+    showLocaleSelector: true,
     navLinks: [
       { label: "Home", href: "/" },
       { label: "Shop", href: "/wardrobe" },
