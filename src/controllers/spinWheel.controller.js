@@ -16,6 +16,13 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SPIN_SECRET = process.env.JWT_ACCESS_SECRET || "spin-wheel-secret";
 const SPIN_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes to claim after spinning
 
+// One spin per day. A SpinWheelEntry stays "active" (blocks a re-spin and is
+// returned by /check) for this long after a spin — INDEPENDENT of the won
+// coupon's own validity. So after a win the user sees their reward on revisit
+// and is told to come back tomorrow; after 24h they may spin again (their coupon
+// stays valid for its full window regardless).
+const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
 function signSpinToken(prizeValue) {
   const body = Buffer.from(
     JSON.stringify({ v: prizeValue, exp: Date.now() + SPIN_TOKEN_TTL_MS })
@@ -198,7 +205,9 @@ const claim = asyncHandler(async (req, res) => {
           },
           alreadyClaimed: true,
         },
-        existing.couponCode ? "You already have an active reward!" : "You already claimed recently!"
+        existing.couponCode
+          ? "You've already earned your reward today — come back tomorrow for another spin!"
+          : "You've already spun today — come back tomorrow!"
       )
     );
   }
@@ -213,7 +222,7 @@ const claim = asyncHandler(async (req, res) => {
     throw ApiError.badRequest("This prize is no longer available. Please spin again.");
   }
 
-  // "TRY AGAIN" — no coupon, 24h expiry so the user can retry next day.
+  // "TRY AGAIN" — no coupon; one-per-day cooldown so the user can retry tomorrow.
   if (!prize.discountType) {
     await SpinWheelEntry.create({
       email: key,
@@ -221,7 +230,7 @@ const claim = asyncHandler(async (req, res) => {
       prizeValue: prize.value,
       couponCode: null,
       user: req.user?._id || null,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + SPIN_COOLDOWN_MS),
     });
 
     await Newsletter.findOneAndUpdate(
@@ -272,7 +281,9 @@ const claim = asyncHandler(async (req, res) => {
     couponCode: code,
     coupon: coupon._id,
     user: req.user?._id || null,
-    expiresAt: validTill,
+    // Spin cooldown (one per day) — NOT the coupon validity (validTill, 7 days).
+    // The coupon stays usable for its full window; this only gates re-spinning.
+    expiresAt: new Date(Date.now() + SPIN_COOLDOWN_MS),
   });
 
   await Newsletter.findOneAndUpdate(
