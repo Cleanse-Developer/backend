@@ -14,6 +14,8 @@ const PUBLIC_KEYS = [
   "newsletterPopupConfig",
   "siteName",
   "supportEmail",
+  // "maintenance" is deliberately absent — it is served by its own endpoint
+  // (GET /settings/maintenance), not through this payload. See MAINTENANCE_DEFAULTS.
   // CMS section keys
   "cmsHero",
   "cmsFormula",
@@ -660,6 +662,32 @@ const CMS_DEFAULTS = {
   },
 };
 
+// Site-wide maintenance screen. `enabled` is the switch; everything else is the copy
+// the screen renders.
+//
+// Deliberately NOT part of CMS_DEFAULTS: getPublicSettings loops over every key in
+// that object, so putting it there would ship the whole maintenance copy to every
+// visitor on every page — for a consumer that does not exist, since the storefront
+// gate is server-side and reads GET /settings/maintenance instead.
+//
+// The contact fields default to EMPTY on purpose: blank means "inherit from
+// cmsFooter.contact", which is already the single source of truth for the org's
+// details (footer, contact page and chat support all read it). Filling them here
+// would create a second copy to drift out of sync.
+const MAINTENANCE_DEFAULTS = {
+  enabled: false,
+  eyebrow: "Pardon the pause",
+  heading: "We are tending\nto something",
+  message:
+    "Our shelves are being restocked and our rituals refined. Cleanse will reopen shortly.",
+  revisitNote: "Please look in on us again in a little while.",
+  email: "",
+  phone: "",
+  whatsapp: "",
+  addressLines: [],
+  showBranches: true,
+};
+
 // GET /api/settings/public
 const getPublicSettings = asyncHandler(async (req, res) => {
   // TEMPORARY: in-memory cache disabled — always read fresh from DB.
@@ -788,4 +816,39 @@ const getPublicSettings = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok(result, "Settings fetched successfully"));
 });
 
-module.exports = { getPublicSettings, invalidateSettingsCache, CMS_DEFAULTS };
+// GET /api/settings/maintenance (public)
+// Deliberately separate from /settings/public: the storefront's root layout fetches
+// this uncached on EVERY render so the switch takes effect near-instantly, so the
+// payload has to stay small — /settings/public ships the entire CMS.
+//
+// Blank contact fields inherit from cmsFooter.contact rather than being duplicated,
+// so an admin who never touches them still gets the real org details on the screen.
+const getMaintenance = asyncHandler(async (req, res) => {
+  const docs = await Settings.find({
+    key: { $in: ["maintenance", "cmsFooter"] },
+  }).lean();
+
+  const saved = {};
+  for (const doc of docs) saved[doc.key] = doc.value;
+
+  const value = { ...MAINTENANCE_DEFAULTS, ...(saved.maintenance || {}) };
+
+  // cmsFooter.contact is the canonical org contact block — fall back to it field by
+  // field so an admin can override just the phone (say) and inherit the rest.
+  const contact = saved.cmsFooter?.contact || CMS_DEFAULTS.cmsFooter.contact || {};
+  if (!value.email) value.email = contact.email || "";
+  if (!value.phone) value.phone = contact.phone || "";
+  if (!Array.isArray(value.addressLines) || value.addressLines.length === 0) {
+    value.addressLines = contact.addressLines || [];
+  }
+
+  res.set("Cache-Control", "no-store");
+  res.json(ApiResponse.ok(value, "Maintenance settings fetched"));
+});
+
+module.exports = {
+  getPublicSettings,
+  getMaintenance,
+  invalidateSettingsCache,
+  CMS_DEFAULTS,
+};
