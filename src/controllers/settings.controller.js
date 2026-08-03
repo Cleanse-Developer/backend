@@ -676,11 +676,13 @@ const CMS_DEFAULTS = {
 // would create a second copy to drift out of sync.
 const MAINTENANCE_DEFAULTS = {
   enabled: false,
+  // Each line does distinct work so a visitor gets the point at a glance instead of
+  // reading three restatements of it: the eyebrow sets tone, the HEADING carries the
+  // whole message on its own, the body says what is happening, the note makes the ask.
   eyebrow: "Pardon the pause",
-  heading: "We are tending\nto something",
-  message:
-    "Our shelves are being restocked and our rituals refined. Cleanse will reopen shortly.",
-  revisitNote: "Please look in on us again in a little while.",
+  heading: "We'll be back\nvery soon",
+  message: "Our shelves are being restocked and our rituals refined.",
+  revisitNote: "Do look in on us again in a little while.",
   email: "",
   phone: "",
   whatsapp: "",
