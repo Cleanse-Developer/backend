@@ -552,6 +552,7 @@ const CMS_DEFAULTS = {
     contact: {
       addressLines: [
         "HRBD Life Sciences Pvt. Ltd.",
+        "Cleanse Ayurveda Private Limited",
         "42 Wellness Avenue, Bandra West, Mumbai 400050",
       ],
       email: "care@cleanseayurveda.com",
@@ -680,7 +681,9 @@ const MAINTENANCE_DEFAULTS = {
   // reading three restatements of it: the eyebrow sets tone, the HEADING carries the
   // whole message on its own, the body says what is happening, the note makes the ask.
   eyebrow: "Pardon the pause",
-  heading: "We'll be back\nvery soon",
+  // One line on purpose — it is the focal text and reads strongest unbroken. A \n here
+  // still works (the storefront splits on it and animates each line separately).
+  heading: "We'll be back very soon",
   message: "Our shelves are being restocked and our rituals refined.",
   revisitNote: "Do look in on us again in a little while.",
   email: "",
