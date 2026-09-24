@@ -9,6 +9,7 @@ const LoyaltyTransaction = require("../models/LoyaltyTransaction");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
+const metaCapi = require("../services/metaCapi.service");
 const { createOrderId, runCodPostActions } = require("../services/order.service");
 const whatsappService = require("../services/whatsapp.service");
 const env = require("../config/env");
@@ -315,6 +316,10 @@ const placeOrder = asyncHandler(async (req, res) => {
 
   // Opportunistically complete a thin (OTP-created) profile from shipping info.
   await backfillUserProfile(req.user._id, shippingInfo);
+
+  // Meta Conversions API Purchase (fire-and-forget; never throws). Deduped
+  // with the storefront pixel's Purchase via event_id purchase_<orderId>.
+  metaCapi.sendPurchase(order, { user: req.user, browser: metaCapi.browserContext(req) });
 
   // COD confirmation gate: when enabled, hold the order (no loyalty/referral/
   // Shiprocket) and ask the customer to approve via WhatsApp. Those post-actions

@@ -301,6 +301,13 @@ const postOrderActions = async (order, session) => {
   const { backfillUserProfile } = require("./profile.service");
   await backfillUserProfile(session.user, order.shippingAddress);
 
+  // Meta Conversions API Purchase (fire-and-forget; never throws). Deduped
+  // with the storefront pixel's Purchase via event_id purchase_<orderId>.
+  require("./metaCapi.service").sendPurchase(order, {
+    user: session.user ? { _id: session.user } : undefined,
+    browser: session.metaTracking,
+  });
+
   // Order confirmation email (best-effort). Only for confirmed orders — a
   // pending COD here gets its email later when it's confirmed.
   if (order.status === "confirmed") {

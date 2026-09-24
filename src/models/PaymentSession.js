@@ -103,6 +103,18 @@ const paymentSessionSchema = new mongoose.Schema(
     affiliateRef: {
       slug: { type: String, default: null },
     },
+    // Browser identifiers for the server-side Meta Purchase event (fbp/fbc
+    // cookies, IP, user agent). Captured at initiation because the webhook and
+    // expiry-job order paths run without the shopper's request.
+    metaTracking: {
+      fbp: String,
+      fbc: String,
+      clientId: String,
+      sessionId: String,
+      ip: String,
+      userAgent: String,
+      sourceUrl: String,
+    },
     giftWrap: { type: Boolean, default: false },
     giftMessage: { type: String, maxlength: 200 },
 

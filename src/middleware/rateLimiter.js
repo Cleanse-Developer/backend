@@ -36,4 +36,14 @@ const contactLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { globalLimiter, authLimiter, adminLimiter, contactLimiter };
+// Storefront analytics relay (/api/ev). Mounted ahead of globalLimiter so page
+// views never eat into a shopper's API budget; events are batched client-side,
+// so a real visitor sends a handful per minute.
+const eventsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { globalLimiter, authLimiter, adminLimiter, contactLimiter, eventsLimiter };

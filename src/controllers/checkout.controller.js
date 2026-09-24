@@ -244,6 +244,7 @@ const initiateCheckout = asyncHandler(async (req, res) => {
           // Freeze last-click promoter attribution so the webhook order-create
           // path (no request cookie) can still attribute link-driven orders.
           affiliateRef: { slug: req.body?.attribution?.slug || null },
+          metaTracking: require("../services/metaCapi.service").browserContext(req),
           giftWrap: giftWrap || false,
           giftMessage: giftMessage || undefined,
           shippingAddress: shippingInfo,

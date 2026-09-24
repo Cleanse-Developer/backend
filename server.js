@@ -12,7 +12,7 @@ require("./src/config/env");
 const connectDB = require("./src/config/db");
 const corsOptions = require("./src/config/cors");
 const requestLogger = require("./src/middleware/requestLogger");
-const { globalLimiter } = require("./src/middleware/rateLimiter");
+const { globalLimiter, eventsLimiter } = require("./src/middleware/rateLimiter");
 const errorHandler = require("./src/middleware/errorHandler");
 const notFound = require("./src/middleware/notFound");
 const routes = require("./src/routes");
@@ -41,6 +41,14 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(mongoSanitize());
 app.use(requestLogger);
+// Meta Conversions API relay. Registered before globalLimiter (own limit) and
+// parses text/plain because the storefront sends it with navigator.sendBeacon.
+app.post(
+  "/api/ev",
+  eventsLimiter,
+  express.text({ type: "text/plain", limit: "32kb" }),
+  require("./src/controllers/metaEvents.controller").relayEvents
+);
 app.use(globalLimiter);
 
 // Health check
