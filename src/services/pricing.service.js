@@ -11,8 +11,10 @@ const {
 const {
   DISCOUNT_TIERS,
   SHIPPING,
-  GIFT_WRAP_COST,
 } = require("../utils/constants");
+const { getConfig: getChargeMode } = require("../utils/shippingChargeMode");
+const { getGiftWrapCost } = require("../utils/giftWrapCost");
+const { quoteShiprocketCharge, resolveFreeAbove } = require("./shippingRate.service");
 const resolveItemPrice = require("../utils/resolveItemPrice");
 const { requiresVariantSelection } = require("../utils/resolveItemPrice");
 const ApiError = require("../utils/ApiError");
@@ -302,6 +304,49 @@ const resolveShippingConfig = async (location = null, paymentMethod = "prepaid")
 };
 
 /**
+ * Base delivery charge (before promo / coupon adjustments).
+ *
+ * Static mode: the admin rate for the payment method / zone, free at or above its
+ * threshold (the original behaviour, unchanged).
+ * Dynamic mode: free at or above the dynamic free-delivery rule (see
+ * resolveFreeAbove); below it, the live Shiprocket rate for the pincode. If
+ * Shiprocket has no usable rate the static rate is charged ("static-fallback"),
+ * and with no pincode yet the static rate is only an estimate (pending = true).
+ *
+ * @returns {Promise<{ cost: number, source: string, pending: boolean,
+ *   courier: string|null, etaDays: number|null }>}
+ */
+const resolveBaseShipping = async ({ subtotal, staticShipping, chargeMode, location, paymentMethod }) => {
+  const dynamic = chargeMode?.mode === "dynamic";
+  const freeAbove = resolveFreeAbove(chargeMode, staticShipping.freeAbove);
+  const result = (cost, extra = {}) => ({
+    cost,
+    source: "static",
+    pending: false,
+    courier: null,
+    etaDays: null,
+    ...extra,
+  });
+
+  if (subtotal >= freeAbove) return result(0);
+  if (!dynamic) return result(staticShipping.standardRate);
+
+  const pincode = location?.pincode ? String(location.pincode).trim() : "";
+  if (!/^\d{6}$/.test(pincode)) {
+    return result(staticShipping.standardRate, { pending: true });
+  }
+
+  const quote = await quoteShiprocketCharge({ pincode, method: paymentMethod, config: chargeMode });
+  if (!quote) return result(staticShipping.standardRate, { source: "static-fallback" });
+
+  return result(quote.charge, {
+    source: "shiprocket",
+    courier: quote.courierName || null,
+    etaDays: quote.etaDays,
+  });
+};
+
+/**
  * Calculate complete pricing breakdown for an order.
  *
  * Discount application order:
@@ -378,11 +423,20 @@ const calculatePricing = async (
   // discount_tier_config (see calculateTierProgress) and is method-agnostic, so it
   // may differ from the actual per-method freeAbove resolved here — the resolved
   // value is always authoritative for the charge.
-  const { standardRate, freeAbove } = await resolveShippingConfig(
-    shippingLocation,
-    paymentMethod
-  );
-  const baseShippingCost = subtotal >= freeAbove ? 0 : standardRate;
+  //
+  // In "dynamic" charge mode (Shipping tab toggle) the charge for orders below the
+  // free-delivery amount is the live Shiprocket rate for the pincode; the static
+  // rate above then only serves as the fallback. See resolveBaseShipping.
+  const staticShipping = await resolveShippingConfig(shippingLocation, paymentMethod);
+  const chargeMode = await getChargeMode();
+  const shippingDecision = await resolveBaseShipping({
+    subtotal,
+    staticShipping,
+    chargeMode,
+    location: shippingLocation,
+    paymentMethod,
+  });
+  const baseShippingCost = shippingDecision.cost;
 
   const promotionResult = await resolvePromotions(
     cart.items,
@@ -437,8 +491,8 @@ const calculatePricing = async (
     effectiveShippingCost = 0;
   }
 
-  // 7. Gift wrap cost
-  const giftWrapCost = giftWrap ? GIFT_WRAP_COST : 0;
+  // 7. Gift wrap cost (admin-configured, Shipping tab)
+  const giftWrapCost = giftWrap ? await getGiftWrapCost() : 0;
 
   // 8. Loyalty points redemption (after coupon discounts, before shipping)
   let loyaltyDiscount = 0;
@@ -519,6 +573,14 @@ const calculatePricing = async (
     couponCode: appliedCouponCode,
     couponDescription,
     shippingCost: effectiveShippingCost,
+    // Where the delivery charge came from, for the storefront / admin:
+    // "static" (admin rates), "shiprocket" (live quote), "static-fallback" (dynamic
+    // mode but Shiprocket had no usable rate). shippingPending = dynamic mode and no
+    // pincode yet, so shippingCost is only the static estimate.
+    shippingSource: shippingDecision.source,
+    shippingPending: shippingDecision.pending,
+    shippingCourier: shippingDecision.courier,
+    shippingEtaDays: shippingDecision.etaDays,
     giftWrapCost,
     loyaltyDiscount,
     loyaltyPointsRedeemed,
@@ -590,5 +652,6 @@ module.exports = {
   calculateBundleDiscounts,
   calculateTierProgress,
   resolveShippingConfig,
+  resolveBaseShipping,
   getDiscountTierConfig,
 };

@@ -26,11 +26,20 @@ const itemSku = (item) => {
   return item.selectedSize ? `${base}-${item.selectedSize}` : base;
 };
 
+/**
+ * Serviceability + courier rates for a pincode.
+ *
+ * `source` says where the answer came from, so callers can tell a real quote from
+ * a stand-in: "shiprocket" (live API), "test" (simulated couriers, test mode) or
+ * "fallback" (API failed, answered from our own zones, no rates). Anything that
+ * charges a customer must only trust "shiprocket".
+ */
 const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
   if (await isTestMode()) {
     return {
       available: true,
       estimatedDays: "3-5",
+      source: "test",
       couriers: [
         { courierId: 1, name: "Test Courier (Surface)", rate: 50, estimatedDays: 3 },
         { courierId: 2, name: "Test Courier (Air)", rate: 90, estimatedDays: 1 },
@@ -57,14 +66,25 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
     const fastest = couriers.reduce((a, b) => (edd(a) <= edd(b) ? a : b));
     const fast = edd(fastest);
 
+    // Shiprocket's own pick for this lane; the id sits at data.data in the response.
+    const recommended =
+      data.data?.recommended_courier_company_id ??
+      data.data?.shiprocket_recommended_courier_id ??
+      null;
+
     return {
       available: true,
       estimatedDays: `${fast}-${fast + 2}`,
+      source: "shiprocket",
+      recommendedCourierId: recommended,
       couriers: couriers.map((c) => ({
         courierId: c.courier_company_id,
         name: c.courier_name,
         rate: c.rate,
         estimatedDays: edd(c),
+        // Breakdown, when Shiprocket sends it (rate already includes these).
+        freightCharge: c.freight_charge ?? null,
+        codCharge: c.cod_charges ?? null,
       })),
     };
   } catch (err) {
@@ -79,6 +99,7 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
         available: true,
         estimatedDays: zone.estimatedDays.standard,
         couriers: [],
+        source: "fallback",
       };
     }
 
@@ -90,6 +111,7 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
           available: true,
           estimatedDays: z.estimatedDays.standard,
           couriers: [],
+          source: "fallback",
         };
       }
     }
@@ -98,6 +120,7 @@ const checkServiceability = async (pincode, weight = 0.5, cod = 1) => {
       available: false,
       estimatedDays: null,
       couriers: [],
+      source: "fallback",
     };
   }
 };

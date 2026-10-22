@@ -5,6 +5,9 @@ const ApiResponse = require("../../utils/ApiResponse");
 const sr = require("../../services/shiprocket.service");
 const shiprocketMode = require("../../utils/shiprocketMode");
 const shiprocketConfig = require("../../utils/shiprocketConfig");
+const shippingChargeMode = require("../../utils/shippingChargeMode");
+const { resolveShippingConfig } = require("../../services/pricing.service");
+const { pickCourier, computeCharge, resolveFreeAbove } = require("../../services/shippingRate.service");
 const ShiprocketWebhookLog = require("../../models/ShiprocketWebhookLog");
 
 const TRACKING_URL = (awb) => `https://shiprocket.co/tracking/${awb}`;
@@ -228,14 +231,87 @@ const wallet = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok({ balance: r?.data?.balance_amount ?? null, raw: r }, "Wallet balance"));
 });
 
-// POST /api/admin/shiprocket/serviceability { pincode, cod, weight }
+// POST /api/admin/shiprocket/serviceability { pincode, cod, weight, orderValue }
+// Besides Shiprocket's raw answer, returns a `preview` of what a customer would
+// pay for this pincode under BOTH charge modes, so the admin can compare before
+// switching. It uses the same courier choice and maths as live pricing. Read-only.
+// orderValue (₹) defaults to 0, i.e. below any free-delivery amount.
 const serviceability = asyncHandler(async (req, res) => {
-  const { pincode, cod = 1, weight = 0.5 } = req.body;
+  const { pincode, cod = 1, weight, orderValue } = req.body;
   if (!pincode || !/^\d{6}$/.test(String(pincode))) {
     throw ApiError.badRequest("Valid 6-digit pincode is required");
   }
-  const r = await sr.checkServiceability(pincode, weight, cod ? 1 : 0);
-  res.json(ApiResponse.ok({ serviceability: r }, "Serviceability fetched"));
+  const pin = String(pincode);
+  const srCfg = await shiprocketConfig.getConfig();
+  const usedWeight =
+    Number(weight) > 0 ? Number(weight) : Number(srCfg.pkg?.weight) > 0 ? Number(srCfg.pkg.weight) : 0.5;
+  const codFlag = cod ? 1 : 0;
+
+  const r = await sr.checkServiceability(pin, usedWeight, codFlag);
+
+  const chargeMode = await shippingChargeMode.getConfig();
+  const value = Number(orderValue) >= 0 && orderValue !== "" && orderValue != null ? Number(orderValue) : 0;
+  const staticCfg = await resolveShippingConfig({ pincode: pin }, codFlag ? "cod" : "prepaid");
+
+  const staticSide = {
+    rate: staticCfg.standardRate,
+    freeAbove: staticCfg.freeAbove,
+    zone: staticCfg.zone,
+    charge: value >= staticCfg.freeAbove ? 0 : staticCfg.standardRate,
+  };
+
+  // Only a real Shiprocket answer is priced (not test-mode or zone fallback data).
+  let dynamicSide = null;
+  if (r.source === "shiprocket" && r.couriers.length) {
+    const picked = pickCourier(r.couriers, chargeMode.courierRule, {
+      defaultCourierId: srCfg.defaultCourierId,
+      recommendedCourierId: r.recommendedCourierId,
+    });
+    if (picked) {
+      const freeAbove = resolveFreeAbove({ ...chargeMode, mode: "dynamic" }, staticCfg.freeAbove);
+      const adjusted = computeCharge(picked.courier.rate, chargeMode);
+      dynamicSide = {
+        courier: {
+          courierId: picked.courier.courierId,
+          name: picked.courier.name,
+          rate: Number(picked.courier.rate),
+          estimatedDays: picked.courier.estimatedDays,
+        },
+        via: picked.via,
+        adjustedRate: adjusted,
+        freeAbove: Number.isFinite(freeAbove) ? freeAbove : null,
+        charge: value >= freeAbove ? 0 : adjusted,
+      };
+    }
+  }
+
+  const customerPays =
+    chargeMode.mode === "dynamic" && dynamicSide ? dynamicSide.charge : staticSide.charge;
+
+  res.json(
+    ApiResponse.ok(
+      {
+        serviceability: r,
+        preview: {
+          activeMode: chargeMode.mode,
+          courierRule: chargeMode.courierRule,
+          orderValue: value,
+          weight: usedWeight,
+          cod: !!codFlag,
+          // "test" = simulated couriers; "fallback" = Shiprocket did not answer.
+          shiprocketSource: r.source,
+          pickupPincode: srCfg.pickupPincode,
+          // 110001 is the built-in default, i.e. nobody set the warehouse pincode.
+          isDefaultPickup: srCfg.pickupPincode === "110001",
+          defaultCourierId: srCfg.defaultCourierId || null,
+          static: staticSide,
+          dynamic: dynamicSide,
+          customerPays,
+        },
+      },
+      "Serviceability fetched"
+    )
+  );
 });
 
 // GET /api/admin/shiprocket/mode

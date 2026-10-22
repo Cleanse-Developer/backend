@@ -1,4 +1,5 @@
 const ShippingZone = require("../../models/ShippingZone");
+const shippingChargeMode = require("../../utils/shippingChargeMode");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -42,4 +43,19 @@ const deleteZone = asyncHandler(async (req, res) => {
   res.json(ApiResponse.ok(null, "Shipping zone deleted"));
 });
 
-module.exports = { listZones, createZone, updateZone, deleteZone };
+// GET /api/admin/shipping/charge-mode
+// "static" = the admin rates on this page; "dynamic" = live Shiprocket rates, with
+// the static rates as the fallback.
+const getChargeMode = asyncHandler(async (req, res) => {
+  const config = await shippingChargeMode.getConfig();
+  res.json(ApiResponse.ok({ config }, "Delivery charge mode"));
+});
+
+// PATCH /api/admin/shipping/charge-mode
+// Body: { mode, courierRule, freeThreshold: { mode, amount }, adjustment, cap }
+const setChargeMode = asyncHandler(async (req, res) => {
+  const config = await shippingChargeMode.setConfig(req.body);
+  res.json(ApiResponse.ok({ config }, `Delivery charges set to ${config.mode}`));
+});
+
+module.exports = { listZones, createZone, updateZone, deleteZone, getChargeMode, setChargeMode };
