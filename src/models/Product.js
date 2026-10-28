@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const responsiveSources = require("./shared/responsiveSources");
 
 // Product-detail highlight cards (see `highlights` on the schema below).
-const MAX_HIGHLIGHT_CARDS = 3;
+const MAX_HIGHLIGHT_CARDS = 4;
 const HIGHLIGHT_CTA_TARGETS = [
   "ingredients", // opens the Ingredients tab
   "why-it-works", // opens the "Why it works" tab
@@ -89,14 +89,33 @@ const productSchema = new mongoose.Schema(
       },
     ],
     ingredients: { type: String },
+    // Short paragraph shown above the ingredient icons on the Ingredients tab
+    // (the full composition in `ingredients` is then tucked behind a toggle).
+    // Blank lines separate paragraphs.
+    ingredientsIntro: { type: String, trim: true, maxlength: 600 },
     howToUse: { type: String },
     values: { type: String },
     shippingInfo: { type: String },
     policies: { type: String },
     tabHighlights: {
-      ingredients: [{ icon: { type: String }, label: { type: String } }],
+      // `description` is the one-line explainer under an ingredient on the
+      // Ingredients tab, and the sentence under a numbered step on How to Use.
+      // Optional: items without one render exactly as before.
+      ingredients: [
+        {
+          icon: { type: String },
+          label: { type: String },
+          description: { type: String, trim: true, maxlength: 300 },
+        },
+      ],
       values: [{ icon: { type: String }, label: { type: String } }],
-      howToUse: [{ icon: { type: String }, label: { type: String } }],
+      howToUse: [
+        {
+          icon: { type: String },
+          label: { type: String },
+          description: { type: String, trim: true, maxlength: 300 },
+        },
+      ],
       shippingInfo: [{ icon: { type: String }, label: { type: String } }],
       policies: [{ icon: { type: String }, label: { type: String } }],
     },

@@ -1,7 +1,8 @@
 /**
- * Fill the product-detail "highlights" section (3 cards per product) for the
- * seven launch products, using the client's copy doc. Card text is verbatim
- * from the doc; the images are text-free 4:3 crops (<slug>-1.png .. -3.png).
+ * Fill the product-detail "highlights" section (3 cards per product, 4 for the
+ * Hair Oil) for the seven launch products, using the client's copy doc. Card
+ * text is verbatim from the doc; the images are text-free 4:3 crops
+ * (<slug>-1.png, <slug>-2.png, ...).
  *
  * Dry run (default) reads the public API, no login, no writes:
  *   node backend/scripts/update-product-highlight-cards.js
@@ -17,7 +18,8 @@
  * The backend with the `highlights` field must be deployed first, otherwise
  * Mongoose silently drops the field. The script proves persistence on the first
  * product BEFORE uploading any image, and re-reads every product afterwards.
- * Idempotent: a product that already has these cards is skipped.
+ * Idempotent: a product that already has these cards is skipped, and cards whose
+ * text and image are already in place are kept (only new cards upload an image).
  */
 
 const fs = require("node:fs");
@@ -57,6 +59,12 @@ const CARDS = {
       chipsLabel: "Recommended",
       chips: ["2–3 times weekly"],
       cta: ritual,
+    },
+    {
+      eyebrow: "Cleanse difference",
+      title: "We go beyond the ingredient name.",
+      body: "Kasvi combines traditional Ayurvedic botanicals with a formulation designed around modern hair and scalp concerns.",
+      chips: ["Bhringraj", "Amla", "Brahmi", "Neem", "Triphala", "Karanja"],
     },
   ],
   "face-moisturizer": [
@@ -280,7 +288,12 @@ async function main() {
 
       // Canary: prove the backend stores `highlights` before uploading anything.
       if (!proven) {
-        await patch(product._id, { cards: wanted });
+        // Keep images that are already in place, so the canary never strips them.
+        await patch(product._id, {
+          cards: wanted.map((c, i) =>
+            have[i] && textOf(have[i]) === textOf(c) && have[i].image?.url ? { ...c, image: have[i].image } : c
+          ),
+        });
         const stored = (await getProduct(slug)).highlights?.cards || [];
         if (stored.length !== wanted.length) {
           throw new Error(
@@ -293,6 +306,12 @@ async function main() {
 
       const cards = [];
       for (let i = 0; i < wanted.length; i++) {
+        // Keep an image that is already in place for an unchanged card; upload only new ones.
+        const prev = have[i];
+        if (prev && textOf(prev) === textOf(wanted[i]) && prev.image?.url) {
+          cards.push({ ...wanted[i], image: { url: prev.image.url, publicId: prev.image.publicId, alt: prev.image.alt } });
+          continue;
+        }
         const image = await uploadImage(files[i], auth);
         cards.push({ ...wanted[i], image: { ...image, alt: `${product.name} - ${wanted[i].title}`.slice(0, 160) } });
       }
@@ -308,7 +327,7 @@ async function main() {
           })
         )
       ).every(Boolean);
-      if (textOk && imgOk && after.length === wanted.length) console.log("    ✓ saved and verified (3 cards, text matches, images load)");
+      if (textOk && imgOk && after.length === wanted.length) console.log(`    ✓ saved and verified (${after.length} cards, text matches, images load)`);
       else {
         console.log(`    ✗ saved, but re-read mismatch: ${after.length} cards, text ${textOk ? "ok" : "differs"}, images ${imgOk ? "ok" : "do not all load"}`);
         failed++;
