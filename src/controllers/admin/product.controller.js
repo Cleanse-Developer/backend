@@ -149,6 +149,7 @@ const JSON_FIELDS = [
   "seo",
   "tabHighlights",
   "listingContent",
+  "highlights",
   "benefits",
   "skinType",
   "concerns",

@@ -1,6 +1,50 @@
 const mongoose = require("mongoose");
 const responsiveSources = require("./shared/responsiveSources");
 
+// Product-detail highlight cards (see `highlights` on the schema below).
+const MAX_HIGHLIGHT_CARDS = 3;
+const HIGHLIGHT_CTA_TARGETS = [
+  "ingredients", // opens the Ingredients tab
+  "why-it-works", // opens the "Why it works" tab
+  "how-to-use", // opens the How to Use tab
+  "ritual", // links to /ritual
+  "url", // links to cta.url
+];
+// An empty string from a half-filled admin form means "not set".
+const emptyToUndefined = (v) => (v === "" || v === null ? undefined : v);
+
+const highlightCardSchema = new mongoose.Schema(
+  {
+    eyebrow: { type: String, trim: true, maxlength: 40 },
+    title: { type: String, required: true, trim: true, maxlength: 120 },
+    // Large callout line under the title, e.g. "Bhringraj + Amla".
+    highlight: { type: String, trim: true, maxlength: 80 },
+    body: { type: String, trim: true, maxlength: 500 },
+    // Optional chip row with its label, e.g. "Targets": Hair Fall, Weak Roots.
+    chipsLabel: { type: String, trim: true, maxlength: 30 },
+    chips: {
+      type: [{ type: String, trim: true, maxlength: 60 }],
+      validate: {
+        validator: (chips) => chips.length <= 6,
+        message: "A highlight card can have at most 6 chips",
+      },
+    },
+    cta: {
+      label: { type: String, trim: true, maxlength: 40, set: emptyToUndefined },
+      target: { type: String, enum: HIGHLIGHT_CTA_TARGETS, set: emptyToUndefined },
+      // Only used when target === "url".
+      url: { type: String, trim: true, maxlength: 500, set: emptyToUndefined },
+    },
+    // Pre-uploaded through POST /admin/cms/upload-image, so { url, publicId }.
+    image: {
+      url: { type: String, trim: true, set: emptyToUndefined },
+      publicId: { type: String, set: emptyToUndefined },
+      alt: { type: String, trim: true, maxlength: 160 },
+    },
+  },
+  { _id: false }
+);
+
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -66,6 +110,22 @@ const productSchema = new mongoose.Schema(
       tags: [{ type: String }],
       helps: [{ type: String }],
       targets: [{ type: String }],
+    },
+    // Storefront product-detail "highlights" section, shown right below the hero
+    // (up to MAX_HIGHLIGHT_CARDS cards: formula story, concern, ritual...). Fully
+    // optional: the storefront renders nothing when a product has no cards, so
+    // products without this content are unaffected. Not to be confused with
+    // tabHighlights above, which are the icon chips inside the info tabs.
+    highlights: {
+      eyebrow: { type: String, trim: true, maxlength: 40 },
+      title: { type: String, trim: true, maxlength: 100 },
+      cards: {
+        type: [highlightCardSchema],
+        validate: {
+          validator: (cards) => cards.length <= MAX_HIGHLIGHT_CARDS,
+          message: `A product can have at most ${MAX_HIGHLIGHT_CARDS} highlight cards`,
+        },
+      },
     },
     averageRating: { type: Number, default: 0, min: 0, max: 5 },
     reviewCount: { type: Number, default: 0 },
